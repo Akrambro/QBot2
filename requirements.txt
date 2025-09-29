@@ -1,0 +1,4 @@
+quotexpy
+python-dotenv
+fastapi
+uvicorn
