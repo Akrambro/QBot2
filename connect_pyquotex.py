@@ -16,9 +16,9 @@ async def main():
     try:
         # select account type before connecting
         client.set_account_mode('REAL' if account_mode == 'REAL' else 'PRACTICE')
-        connected = await client.connect()
+        connected, reason = await client.connect()
         if not connected:
-            raise RuntimeError('Login failed')
+            raise RuntimeError(f'Login failed: {reason}')
         balance = await client.get_balance()
         print(f'Connected via PyQuotex ({account_mode}). Balance: {balance}')
     except Exception as e:

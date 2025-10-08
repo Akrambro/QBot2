@@ -2,7 +2,7 @@ import os
 import asyncio
 from dotenv import load_dotenv
 
-from quotexpy import Quotex
+from pyquotex.stable_api import Quotex
 
 
 def str_to_bool(value: str) -> bool:
@@ -14,34 +14,16 @@ async def main() -> None:
 
     email = os.getenv("QX_EMAIL")
     password = os.getenv("QX_PASSWORD")
-    browser_flag = str_to_bool(os.getenv("QX_BROWSER", "true"))
-    pin_env = os.getenv("QX_PIN")
 
     if not email or not password:
         raise SystemExit("Missing QX_EMAIL or QX_PASSWORD in .env")
 
-    def on_pin_code():
-        if pin_env:
-            return pin_env
-        # Fallback: ask user in console if available
-        try:
-            return input("Enter Quotex PIN/2FA code: ")
-        except Exception:
-            raise RuntimeError("QX_PIN not set and interactive input unavailable")
-
-    client = Quotex(
-        email=email,
-        password=password,
-        browser=browser_flag,
-        headless=False,
-        on_pin_code=on_pin_code,
-        wait_for_user=True,
-    )
+    client = Quotex(email=email, password=password)
 
     try:
-        connected = await client.connect()
+        connected, reason = await client.connect()
         if not connected:
-            raise RuntimeError("Login failed")
+            raise RuntimeError(f"Login failed: {reason}")
         balance = await client.get_balance()
         print(f"Connected. Balance: {balance}")
     except Exception as exc:
