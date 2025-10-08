@@ -46,24 +46,38 @@ def compute_signal(candles: List[Dict]) -> Tuple[str, bool]:
     return "", False
 
 
-async def get_payout_filtered_assets(client: Quotex, assets: List[str]) -> List[str]:
-    await client.get_instruments()
-    payouts = []
-    for asset in assets:
+def get_payout_filtered_assets(client: Quotex, assets: List[str]) -> List[str]:
+    all_payments = client.get_payment()
+    tradable_assets = []
+    if not all_payments:
+        print("Could not fetch payment data.")
+        return tradable_assets
+
+    for asset_name in assets:
         try:
-            profit = client.get_payout_by_asset(asset, timeframe="1")
-            if profit is None:
+            payment_info = all_payments.get(asset_name)
+            if not payment_info or not payment_info.get("open"):
                 continue
-            if isinstance(profit, dict):
-                val = profit.get("1M") or profit.get("1")
-                payout = float(val) if val is not None else 0.0
-            else:
-                payout = float(profit)
+
+            payout_value = payment_info.get('payout')
+            payout = 0
+            if isinstance(payout_value, dict):
+                # Using '1' for 1-minute timeframe as in old code
+                payout = float(payout_value.get("1", 0))
+            elif payout_value is not None:
+                payout = float(payout_value)
+
             if payout >= PAYOUT_THRESHOLD:
-                payouts.append(asset)
-        except Exception:
+                tradable_assets.append(asset_name)
+
+        except (ValueError, TypeError) as e:
+            print(f"Could not parse payout for {asset_name}: {e}. Data: {all_payments.get(asset_name)}")
             continue
-    return payouts
+        except Exception as e:
+            print(f"An unexpected error occurred while processing payout for {asset_name}: {e}")
+            continue
+
+    return tradable_assets
 
 
 async def fetch_last_candles(client: Quotex, asset: str, timeframe: int, count: int) -> List[Dict]:
@@ -85,15 +99,15 @@ async def main():
 
     client = Quotex(email=email, password=password, lang="en")
     client.set_account_mode("REAL" if ACCOUNT_MODE == "REAL" else "PRACTICE")
-    connected, _ = await client.connect()
+    connected, reason = await client.connect()
     if not connected:
-        raise SystemExit("Failed to connect")
+        raise SystemExit(f"Failed to connect: {reason}")
 
     end_time = None if RUN_MINUTES == 0 else time.time() + RUN_MINUTES * 60
     last_payout_refresh = 0.0
     tradable_assets: List[str] = []
 
-    balance = await client.get_balance()
+    balance = client.get_balance()
     trade_amount = round(max(balance * TRADE_PERCENT, 1.0), 2)
     print(f"Loop start | Mode={ACCOUNT_MODE} Balance={balance} Amount={trade_amount} Timeframe={TIMEFRAME}s Run={RUN_MINUTES}m")
 
@@ -109,7 +123,7 @@ async def main():
             break
         # refresh payout filter periodically
         if time.time() - last_payout_refresh > PAYOUT_REFRESH_MIN * 60 or not tradable_assets:
-            tradable_assets = await get_payout_filtered_assets(client, ASSET_LIST)
+            tradable_assets = get_payout_filtered_assets(client, ASSET_LIST)
             last_payout_refresh = time.time()
             print(f"Payout-filtered assets: {tradable_assets}")
 

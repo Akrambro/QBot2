@@ -1,4 +1,5 @@
-quotexpy
+git+https://github.com/cleitonleonel/pyquotex.git
 python-dotenv
 fastapi
 uvicorn
+numpy
