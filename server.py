@@ -5,11 +5,17 @@ import shutil
 import asyncio
 import subprocess
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import List, Optional, Dict, Any
 
+from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, validator
+from dotenv import load_dotenv
+
+from pyquotex.stable_api import Quotex
+from assets import live_assets, otc_assets
+from utils import get_payout_filtered_assets
 
 
 ROOT = Path(__file__).parent
@@ -20,7 +26,6 @@ STOP_FILE = ROOT / "STOP"
 
 class StartSettings(BaseModel):
     payout: float = Field(84, ge=0, le=100)
-    assets: str = Field("EURUSD,GBPUSD,USDJPY,USDCHF,USDCAD,AUDUSD,EURGBP,EURJPY")
     timeframe: int = Field(60, ge=15, le=3600)
     trade_percent: float = Field(2.0, ge=0.5, le=15.0)
     account: str = Field("PRACTICE")  # PRACTICE | REAL
@@ -48,11 +53,100 @@ process: Optional[subprocess.Popen] = None
 current_settings: Dict[str, Any] = {}
 
 
+async def _get_account_balance(email, password, mode):
+    client = Quotex(email=email, password=password)
+    try:
+        client.set_account_mode(mode)
+        connected, reason = await client.connect()
+        if not connected:
+            return 0
+        return await client.get_balance()
+    except Exception as e:
+        print(f"Error getting {mode} balance: {e}")
+        return 0
+    finally:
+        await client.close()
+
+
+@app.get("/api/initial_data")
+async def get_initial_data():
+    load_dotenv()
+    email = os.getenv("QX_EMAIL")
+    password = os.getenv("QX_PASSWORD")
+
+    if not email or not password:
+        raise HTTPException(400, "Missing QX_EMAIL or QX_PASSWORD in .env")
+
+    # Fetch balances in parallel
+    practice_balance, real_balance = await asyncio.gather(
+        _get_account_balance(email, password, "PRACTICE"),
+        _get_account_balance(email, password, "REAL")
+    )
+
+    # Fetch tradable assets
+    client = Quotex(email=email, password=password)
+    tradable_assets = []
+    try:
+        connected, reason = await client.connect()
+        if connected:
+            # Using a default payout of 84 for initial filtering, can be adjusted
+            tradable_assets = get_payout_filtered_assets(client, live_assets + otc_assets, 84)
+    finally:
+        await client.close()
+
+    return {
+        "balances": {
+            "practice": practice_balance,
+            "real": real_balance,
+        },
+        "assets": tradable_assets,
+    }
+
+
+@app.get("/api/trade_logs")
+async def get_trade_logs():
+    active_trades = []
+    trade_history = []
+    log_file = ROOT / "trades.log"
+    if not log_file.exists():
+        return {"active_trades": [], "trade_history": []}
+
+    try:
+        with open(log_file, "r") as f:
+            lines = f.readlines()
+
+        today_str = datetime.utcnow().date().isoformat()
+
+        for line in reversed(lines):
+            if not line.strip():
+                continue
+            try:
+                log = json.loads(line)
+
+                # Check if the trade is from today
+                if log.get("timestamp", "").startswith(today_str):
+                    if log.get("status") == "active":
+                        # This is a placeholder for live trade status
+                        log["live_pnl"] = "N/A"
+                        active_trades.append(log)
+                    else:
+                        # Placeholder for balance after trade
+                        log["balance_after"] = "N/A"
+                        trade_history.append(log)
+
+            except json.JSONDecodeError:
+                print(f"Skipping malformed log line: {line.strip()}")
+                continue
+    except Exception as e:
+        print(f"Error reading or processing trades.log: {e}")
+
+    return {"active_trades": active_trades, "trade_history": trade_history}
+
+
 def build_env(settings: StartSettings) -> Dict[str, str]:
     env = os.environ.copy()
     env.update({
         "QX_PAYOUT": str(settings.payout),
-        "QX_ASSETS": settings.assets,
         "QX_TIMEFRAME": str(settings.timeframe),
         "QX_TRADE_PERCENT": str(settings.trade_percent),
         "QX_ACCOUNT": settings.account,
