@@ -1,18 +1,22 @@
 import os
 import time
 import asyncio
+import json
+from datetime import datetime
 from typing import List, Dict, Tuple
 
 from dotenv import load_dotenv
 from pyquotex.stable_api import Quotex
+
+from assets import live_assets, otc_assets
+from utils import get_payout_filtered_assets
 
 
 load_dotenv()
 
 
 PAYOUT_THRESHOLD = float(os.getenv("QX_PAYOUT", "84"))
-ASSET_LIST = os.getenv("QX_ASSETS", "EURUSD,GBPUSD,USDJPY,USDCHF,USDCAD,AUDUSD,EURGBP,EURJPY").split(",")
-ASSET_LIST = [a.strip() for a in ASSET_LIST if a.strip()]
+ASSET_LIST = live_assets + otc_assets
 TIMEFRAME = int(os.getenv("QX_TIMEFRAME", "60"))  # seconds
 TRADE_PERCENT = float(os.getenv("QX_TRADE_PERCENT", "2")) / 100.0
 ACCOUNT_MODE = os.getenv("QX_ACCOUNT", "PRACTICE").upper()
@@ -46,26 +50,6 @@ def compute_signal(candles: List[Dict]) -> Tuple[str, bool]:
     return "", False
 
 
-async def get_payout_filtered_assets(client: Quotex, assets: List[str]) -> List[str]:
-    await client.get_instruments()
-    payouts = []
-    for asset in assets:
-        try:
-            profit = client.get_payout_by_asset(asset, timeframe="1")
-            if profit is None:
-                continue
-            if isinstance(profit, dict):
-                val = profit.get("1M") or profit.get("1")
-                payout = float(val) if val is not None else 0.0
-            else:
-                payout = float(profit)
-            if payout >= PAYOUT_THRESHOLD:
-                payouts.append(asset)
-        except Exception:
-            continue
-    return payouts
-
-
 async def fetch_last_candles(client: Quotex, asset: str, timeframe: int, count: int) -> List[Dict]:
     end_from_time = time.time()
     seconds = timeframe * count
@@ -85,9 +69,9 @@ async def main():
 
     client = Quotex(email=email, password=password, lang="en")
     client.set_account_mode("REAL" if ACCOUNT_MODE == "REAL" else "PRACTICE")
-    connected, _ = await client.connect()
+    connected, reason = await client.connect()
     if not connected:
-        raise SystemExit("Failed to connect")
+        raise SystemExit(f"Failed to connect: {reason}")
 
     end_time = None if RUN_MINUTES == 0 else time.time() + RUN_MINUTES * 60
     last_payout_refresh = 0.0
@@ -109,7 +93,7 @@ async def main():
             break
         # refresh payout filter periodically
         if time.time() - last_payout_refresh > PAYOUT_REFRESH_MIN * 60 or not tradable_assets:
-            tradable_assets = await get_payout_filtered_assets(client, ASSET_LIST)
+            tradable_assets = get_payout_filtered_assets(client, ASSET_LIST, PAYOUT_THRESHOLD)
             last_payout_refresh = time.time()
             print(f"Payout-filtered assets: {tradable_assets}")
 
@@ -130,6 +114,24 @@ async def main():
                 time_mode="TIME",
             )
             print("Placed:", success, payload)
+            if success:
+                try:
+                    with open("trades.log", "a") as f:
+                        log_entry = {
+                            "id": payload.get("id", str(time.time())),
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "asset": asset,
+                            "direction": signal,
+                            "amount": trade_amount,
+                            "duration": TIMEFRAME,
+                            "status": "active",
+                            "pnl": 0, # To be updated later
+                            "account_mode": ACCOUNT_MODE
+                        }
+                        f.write(json.dumps(log_entry) + "\n")
+                except Exception as e:
+                    print(f"Failed to write to trades.log: {e}")
+
         # Wait for next candle boundary before next evaluation round
         await wait_next_candle_open(TIMEFRAME)
 

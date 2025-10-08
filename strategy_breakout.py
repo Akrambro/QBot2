@@ -6,13 +6,15 @@ from typing import List, Dict, Tuple
 from dotenv import load_dotenv
 from pyquotex.stable_api import Quotex
 
+from assets import live_assets, otc_assets
+from utils import get_payout_filtered_assets
+
 
 load_dotenv()
 
 
 PAYOUT_THRESHOLD = float(os.getenv("QX_PAYOUT", "84"))
-ASSET_LIST = os.getenv("QX_ASSETS", "EURUSD,GBPUSD,USDJPY,USDCHF,USDCAD,AUDUSD,EURGBP,EURJPY").split(",")
-ASSET_LIST = [a.strip() for a in ASSET_LIST if a.strip()]
+ASSET_LIST = live_assets + otc_assets
 TIMEFRAME = int(os.getenv("QX_TIMEFRAME", "60"))  # seconds
 TRADE_PERCENT = float(os.getenv("QX_TRADE_PERCENT", "2")) / 100.0
 ACCOUNT_MODE = os.getenv("QX_ACCOUNT", "PRACTICE").upper()
@@ -54,26 +56,6 @@ def compute_signal(candles: List[Dict]) -> Tuple[str, bool]:
     return "", False
 
 
-async def get_payout_filtered_assets(client: Quotex, assets: List[str]) -> List[str]:
-    await client.get_instruments()
-    payouts = []
-    for asset in assets:
-        try:
-            profit = client.get_payout_by_asset(asset, timeframe="1")
-            if profit is None:
-                continue
-            if isinstance(profit, dict):
-                val = profit.get("1M") or profit.get("1")
-                payout = float(val) if val is not None else 0.0
-            else:
-                payout = float(profit)
-            if payout >= PAYOUT_THRESHOLD:
-                payouts.append(asset)
-        except Exception:
-            continue
-    return payouts
-
-
 async def fetch_last_candles(client: Quotex, asset: str, timeframe: int, count: int) -> List[Dict]:
     end_from_time = time.time()
     seconds = timeframe * count
@@ -97,7 +79,7 @@ async def run_strategy_once():
     if not connected:
         raise SystemExit("Failed to connect")
 
-    tradable_assets = await get_payout_filtered_assets(client, ASSET_LIST)
+    tradable_assets = get_payout_filtered_assets(client, ASSET_LIST, PAYOUT_THRESHOLD)
     if not tradable_assets:
         print("No assets meet payout threshold.")
         return
