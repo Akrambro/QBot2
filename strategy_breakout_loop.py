@@ -26,6 +26,13 @@ RUN_MINUTES = int(os.getenv("QX_RUN_MINUTES", "0"))  # 0 means run indefinitely
 PAYOUT_REFRESH_MIN = int(os.getenv("QX_PAYOUT_REFRESH_MIN", "10"))
 
 
+# Daily limits
+DAILY_PROFIT_LIMIT = float(os.getenv("QX_DAILY_PROFIT", "0"))
+DAILY_PROFIT_IS_PERCENT = os.getenv("QX_DAILY_PROFIT_IS_PERCENT") == "1"
+DAILY_LOSS_LIMIT = float(os.getenv("QX_DAILY_LOSS", "0"))
+DAILY_LOSS_IS_PERCENT = os.getenv("QX_DAILY_LOSS_IS_PERCENT") == "1"
+
+
 def compute_signal(candles: List[Dict]) -> Tuple[str, bool]:
     if len(candles) < 6:
         return "", False
@@ -76,10 +83,33 @@ async def main():
     end_time = None if RUN_MINUTES == 0 else time.time() + RUN_MINUTES * 60
     last_payout_refresh = 0.0
     tradable_assets: List[str] = []
+    active_trades = []
 
     balance = await client.get_balance()
+    initial_balance = balance
+    daily_profit = 0
     trade_amount = round(max(balance * TRADE_PERCENT, 1.0), 2)
     print(f"Loop start | Mode={ACCOUNT_MODE} Balance={balance} Amount={trade_amount} Timeframe={TIMEFRAME}s Run={RUN_MINUTES}m")
+
+    async def check_trade_result(trade_id, log_entry):
+        nonlocal daily_profit
+        if await client.check_win(trade_id):
+            profit = client.get_profit()
+            log_entry["status"] = "win"
+            log_entry["pnl"] = profit
+            daily_profit += profit
+        else:
+            profit = client.get_profit()
+            log_entry["status"] = "loss"
+            log_entry["pnl"] = profit
+            daily_profit += profit
+
+        log_entry["timestamp"] = datetime.utcnow().isoformat()
+        try:
+            with open("trades.log", "a") as f:
+                f.write(json.dumps(log_entry) + "\n")
+        except Exception as e:
+            print(f"Failed to write final trade log: {e}")
 
     # Align to next candle to start evaluations
     await wait_next_candle_open(TIMEFRAME)
@@ -91,6 +121,20 @@ async def main():
         if os.path.exists("STOP"):
             print("STOP file detected. Exiting loop.")
             break
+
+        # Check for profit/loss limits
+        if DAILY_PROFIT_LIMIT > 0:
+            limit = DAILY_PROFIT_LIMIT if not DAILY_PROFIT_IS_PERCENT else initial_balance * (DAILY_PROFIT_LIMIT / 100)
+            if daily_profit >= limit:
+                print(f"Daily profit limit reached: {daily_profit} >= {limit}")
+                break
+
+        if DAILY_LOSS_LIMIT > 0:
+            limit = DAILY_LOSS_LIMIT if not DAILY_LOSS_IS_PERCENT else initial_balance * (DAILY_LOSS_LIMIT / 100)
+            if daily_profit <= -limit:
+                print(f"Daily loss limit reached: {daily_profit} <= {-limit}")
+                break
+
         # refresh payout filter periodically
         if time.time() - last_payout_refresh > PAYOUT_REFRESH_MIN * 60 or not tradable_assets:
             tradable_assets = get_payout_filtered_assets(client, ASSET_LIST, PAYOUT_THRESHOLD)
@@ -115,25 +159,38 @@ async def main():
             )
             print("Placed:", success, payload)
             if success:
+                trade_id = payload.get("id")
+                if not trade_id:
+                    print("Could not get trade ID from payload.")
+                    continue
                 try:
+                    log_entry = {
+                        "id": trade_id,
+                        "strategy": "breakout",
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "asset": asset,
+                        "direction": signal,
+                        "amount": trade_amount,
+                        "duration": TIMEFRAME,
+                        "status": "active",
+                        "pnl": 0,
+                        "account_mode": ACCOUNT_MODE
+                    }
                     with open("trades.log", "a") as f:
-                        log_entry = {
-                            "id": payload.get("id", str(time.time())),
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "asset": asset,
-                            "direction": signal,
-                            "amount": trade_amount,
-                            "duration": TIMEFRAME,
-                            "status": "active",
-                            "pnl": 0, # To be updated later
-                            "account_mode": ACCOUNT_MODE
-                        }
                         f.write(json.dumps(log_entry) + "\n")
+
+                    task = asyncio.create_task(check_trade_result(trade_id, log_entry))
+                    active_trades.append(task)
+
                 except Exception as e:
-                    print(f"Failed to write to trades.log: {e}")
+                    print(f"Failed to write to trades.log or create task: {e}")
 
         # Wait for next candle boundary before next evaluation round
         await wait_next_candle_open(TIMEFRAME)
+
+    if active_trades:
+        print(f"Waiting for {len(active_trades)} active trades to complete...")
+        await asyncio.gather(*active_trades)
 
     print("Loop finished.")
 

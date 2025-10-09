@@ -1,4 +1,5 @@
 import os
+print("--- server.py execution started ---")
 import json
 import signal
 import shutil
@@ -32,9 +33,10 @@ class StartSettings(BaseModel):
     max_concurrent: int = Field(1, ge=1, le=10)
     run_minutes: int = Field(0, ge=0)  # 0 => indefinite
     payout_refresh_min: int = Field(10, ge=1, le=120)
-    daily_profit_limit: float = Field(0)  # 0 => disabled
+    # The daily limit fields are now included in the settings
+    daily_profit_limit: float = Field(0)
     daily_profit_is_percent: bool = Field(True)
-    daily_loss_limit: float = Field(0)  # 0 => disabled
+    daily_loss_limit: float = Field(0)
     daily_loss_is_percent: bool = Field(True)
 
     @validator("account")
@@ -53,21 +55,6 @@ process: Optional[subprocess.Popen] = None
 current_settings: Dict[str, Any] = {}
 
 
-async def _get_account_balance(email, password, mode):
-    client = Quotex(email=email, password=password)
-    try:
-        client.set_account_mode(mode)
-        connected, reason = await client.connect()
-        if not connected:
-            return 0
-        return await client.get_balance()
-    except Exception as e:
-        print(f"Error getting {mode} balance: {e}")
-        return 0
-    finally:
-        await client.close()
-
-
 @app.get("/api/initial_data")
 async def get_initial_data():
     load_dotenv()
@@ -77,20 +64,30 @@ async def get_initial_data():
     if not email or not password:
         raise HTTPException(400, "Missing QX_EMAIL or QX_PASSWORD in .env")
 
-    # Fetch balances in parallel
-    practice_balance, real_balance = await asyncio.gather(
-        _get_account_balance(email, password, "PRACTICE"),
-        _get_account_balance(email, password, "REAL")
-    )
-
-    # Fetch tradable assets
     client = Quotex(email=email, password=password)
+    practice_balance = 0
+    real_balance = 0
     tradable_assets = []
+
     try:
         connected, reason = await client.connect()
-        if connected:
-            # Using a default payout of 84 for initial filtering, can be adjusted
-            tradable_assets = get_payout_filtered_assets(client, live_assets + otc_assets, 84)
+        if not connected:
+            raise HTTPException(500, detail=f"Failed to connect to Quotex: {reason}")
+
+        # Fetch practice balance
+        client.set_account_mode("PRACTICE")
+        practice_balance = await client.get_balance()
+
+        # Fetch real balance
+        await client.change_account("REAL")
+        real_balance = await client.get_balance()
+
+        # Using a default payout of 84 for initial filtering
+        tradable_assets = get_payout_filtered_assets(client, live_assets + otc_assets, 84)
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        # Don't raise HTTPException here to avoid breaking the frontend completely
     finally:
         await client.close()
 
@@ -123,14 +120,11 @@ async def get_trade_logs():
             try:
                 log = json.loads(line)
 
-                # Check if the trade is from today
                 if log.get("timestamp", "").startswith(today_str):
                     if log.get("status") == "active":
-                        # This is a placeholder for live trade status
                         log["live_pnl"] = "N/A"
                         active_trades.append(log)
                     else:
-                        # Placeholder for balance after trade
                         log["balance_after"] = "N/A"
                         trade_history.append(log)
 
@@ -149,15 +143,13 @@ def build_env(settings: StartSettings) -> Dict[str, str]:
         "QX_PAYOUT": str(settings.payout),
         "QX_TIMEFRAME": str(settings.timeframe),
         "QX_TRADE_PERCENT": str(settings.trade_percent),
-        "QX_ACCOUNT": settings.account,
+        "QX_ACCOUNT": str(settings.account),
         "QX_RUN_MINUTES": str(settings.run_minutes),
         "QX_PAYOUT_REFRESH_MIN": str(settings.payout_refresh_min),
-        # Optional risk controls for future enhancement
         "QX_DAILY_PROFIT": str(settings.daily_profit_limit),
         "QX_DAILY_PROFIT_IS_PERCENT": "1" if settings.daily_profit_is_percent else "0",
         "QX_DAILY_LOSS": str(settings.daily_loss_limit),
         "QX_DAILY_LOSS_IS_PERCENT": "1" if settings.daily_loss_is_percent else "0",
-        # Concurrency note (not yet enforced in loop)
         "QX_MAX_CONCURRENT": str(settings.max_concurrent),
     })
     return env
@@ -171,7 +163,9 @@ async def start_bot(settings: StartSettings):
     if process and process.poll() is None:
         raise HTTPException(400, detail="Bot already running")
 
-    # Ensure STOP file absent
+    if (ROOT / "trades.log").exists():
+        (ROOT / "trades.log").unlink()
+
     if STOP_FILE.exists():
         STOP_FILE.unlink()
 
@@ -186,7 +180,7 @@ async def start_bot(settings: StartSettings):
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0,
         )
-        current_settings = json.loads(settings.json())
+        current_settings = json.loads(settings.dict())
         return {"ok": True}
     except Exception as exc:
         raise HTTPException(500, detail=f"Failed to start: {exc}")
@@ -195,14 +189,12 @@ async def start_bot(settings: StartSettings):
 @app.post("/api/stop")
 async def stop_bot():
     global process
-    # Signal graceful stop
     STOP_FILE.write_text("stop")
     await asyncio.sleep(1.0)
-    # If still alive, terminate
     if process and process.poll() is None:
         try:
             if os.name == "nt":
-                process.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
+                process.send_signal(signal.CTRL_BREAK_EVENT)
             process.terminate()
         except Exception:
             pass
@@ -216,5 +208,3 @@ def status():
         "running": running,
         "settings": current_settings,
     }
-
-
