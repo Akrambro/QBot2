@@ -10,8 +10,11 @@ function gatherSettings() {
     const tradePercent = parseFloat(document.getElementById('tradePercent').value || '2');
     const account = document.querySelector('input[name="account"]:checked').value;
     const maxConcurrent = parseInt(document.getElementById('maxConcurrent').value || '1', 10);
-    // Daily limits are not part of the new UI, so they are removed from here.
-    return { payout, timeframe, trade_percent: tradePercent, account, max_concurrent: maxConcurrent, run_minutes: 0, payout_refresh_min: 10 };
+    const daily_profit_limit = parseFloat(document.getElementById('profitLimit').value || '0');
+    const daily_profit_is_percent = document.getElementById('profitIsPercent').value === '1';
+    const daily_loss_limit = parseFloat(document.getElementById('lossLimit').value || '0');
+    const daily_loss_is_percent = document.getElementById('lossIsPercent').value === '1';
+    return { payout, timeframe, trade_percent: tradePercent, account, max_concurrent: maxConcurrent, run_minutes: 0, payout_refresh_min: 10, daily_profit_limit, daily_profit_is_percent, daily_loss_limit, daily_loss_is_percent };
 }
 
 async function refreshStatus() {
@@ -42,6 +45,7 @@ async function refreshTradeLogs() {
             const expiresIn = Math.round((new Date(t.timestamp).getTime() / 1000 + t.duration) - (Date.now() / 1000));
             activeBody.innerHTML += `<tr>
                 <td>${t.id}</td>
+                <td>${t.strategy || 'N/A'}</td>
                 <td>${t.asset}</td>
                 <td>${t.amount}</td>
                 <td>${t.direction}</td>
@@ -54,6 +58,7 @@ async function refreshTradeLogs() {
         logs.trade_history.forEach(t => {
             historyBody.innerHTML += `<tr>
                 <td>${new Date(t.timestamp).toLocaleString()}</td>
+                <td>${t.strategy || 'N/A'}</td>
                 <td>${t.asset}</td>
                 <td>${t.amount}</td>
                 <td>${t.direction}</td>
@@ -97,6 +102,13 @@ async function init() {
         document.getElementById('realBalance').textContent = `$${data.balances.real.toFixed(2)}`;
         const assetsList = document.getElementById('assetsList');
         assetsList.innerHTML = data.assets.join(', ');
+        // Assuming the email is returned in the initial_data endpoint.
+        // If not, a new endpoint /api/profile is needed.
+        const profileDetails = document.getElementById('profileDetails');
+        if (data.email) {
+            profileDetails.textContent = data.email;
+        }
+
     } catch (e) {
         console.error("Failed to load initial data", e);
         alert("Failed to load initial data: " + e.message);
