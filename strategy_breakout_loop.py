@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 from pyquotex.stable_api import Quotex
 
 from assets import live_assets, otc_assets
+from strategies.engulfing_strategy import check_engulfing_signal
+from strategies.strategy_breakout import check_breakout_signal
 from utils import get_payout_filtered_assets
 
 
@@ -144,9 +146,16 @@ async def main():
         # fetch and evaluate each asset; place at most one trade per asset per candle
         for asset in tradable_assets:
             candles = await fetch_last_candles(client, asset, TIMEFRAME, 60 * 5)
-            signal, ok = compute_signal(candles)
-            if not ok:
-                continue
+
+            breakout_signal, breakout_ok = check_breakout_signal(candles)
+            if breakout_ok:
+                signal = breakout_signal
+            else:
+                engulfing_signal, engulfing_ok = check_engulfing_signal(candles)
+                if engulfing_ok:
+                    signal = engulfing_signal
+                else:
+                    continue
 
             print(f"Signal {signal.upper()} on {asset}. Waiting for next open...")
             await wait_next_candle_open(TIMEFRAME)
