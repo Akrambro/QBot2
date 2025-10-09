@@ -47,6 +47,8 @@
                     <div class="stat-value" id="practiceBalance">$0.00</div>
                     <div class="stat-title">Real</div>
                     <div class="stat-value" id="realBalance">$0.00</div>
+                    <div class="stat-title">Daily P&L</div>
+                    <div class="stat-value" id="dailyPnl" style="color: var(--muted);">$0.00</div>
                 </div>
             </div>
 
@@ -62,6 +64,10 @@
                             <option value="0">Amount</option>
                         </select>
                     </div>
+                    <div class="progress-tube">
+                        <div class="tube-fill profit-fill" id="profitTube"></div>
+                        <span class="tube-label" id="profitLabel">0%</span>
+                    </div>
                 </div>
                 <div class="field">
                     <label>Daily Stop Loss</label>
@@ -71,6 +77,10 @@
                             <option value="1" selected>%</option>
                             <option value="0">Amount</option>
                         </select>
+                    </div>
+                    <div class="progress-tube">
+                        <div class="tube-fill loss-fill" id="lossTube"></div>
+                        <span class="tube-label" id="lossLabel">0%</span>
                     </div>
                 </div>
             </div>
@@ -97,8 +107,8 @@
 
             <!-- Tradable Assets -->
             <div class="card span-2">
-                <h2>Tradable Assets</h2>
-                <div class="assets-list" id="assetsList"></div>
+                <h2>Tradable Assets <button id="refreshAssets" class="refresh-btn">🔄</button></h2>
+                <div class="assets-list" id="assetsList">Loading assets...</div>
             </div>
 
             <!-- Active Trades -->

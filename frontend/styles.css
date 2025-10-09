@@ -93,6 +93,9 @@ input[type="range"] { width: 100%; }
     gap: 8px 16px;
     align-items: center;
 }
+.balance-grid:has(#dailyPnl) {
+    grid-template-columns: 1fr 1fr 1fr;
+}
 .stat-title {
     font-size: 14px;
     color: var(--muted);
@@ -152,3 +155,52 @@ input[type="range"] { width: 100%; }
     box-shadow: 0 0 12px var(--ring), 0 10px 20px #0007;
 }
 .toggle:hover { transform: translateY(-1px); }
+.refresh-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+.refresh-btn:hover {
+    background: #1f2937;
+    color: var(--text);
+}
+.progress-tube {
+    position: relative;
+    width: 100%;
+    height: 20px;
+    background: #0b1220;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-top: 8px;
+}
+.tube-fill {
+    height: 100%;
+    width: 0%;
+    transition: width 0.5s ease;
+    border-radius: 9px;
+}
+.profit-fill {
+    background: linear-gradient(90deg, #22c55e, #16a34a);
+    box-shadow: 0 0 10px #22c55e55;
+}
+.loss-fill {
+    background: linear-gradient(90deg, #ef4444, #dc2626);
+    box-shadow: 0 0 10px #ef444455;
+}
+.tube-label {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+    z-index: 1;
+}

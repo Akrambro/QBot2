@@ -79,7 +79,7 @@ async def run_strategy_once():
     if not connected:
         raise SystemExit("Failed to connect")
 
-    tradable_assets = get_payout_filtered_assets(client, ASSET_LIST, PAYOUT_THRESHOLD)
+    tradable_assets = await get_payout_filtered_assets(client, ASSET_LIST, PAYOUT_THRESHOLD)
     if not tradable_assets:
         print("No assets meet payout threshold.")
         return

@@ -10,6 +10,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
 from dotenv import load_dotenv
 
@@ -48,6 +49,14 @@ class StartSettings(BaseModel):
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 process: Optional[subprocess.Popen] = None
 current_settings: Dict[str, Any] = {}
@@ -62,32 +71,58 @@ async def get_initial_data():
     if not email or not password:
         raise HTTPException(400, "Missing QX_EMAIL or QX_PASSWORD in .env")
 
-    client = Quotex(email=email, password=password)
     practice_balance = 0
     real_balance = 0
     tradable_assets = []
 
     try:
+        print(f"🔗 Connecting to Quotex with email: {email}")
+        client = Quotex(email=email, password=password, lang="en")
         connected, reason = await client.connect()
+        
         if not connected:
-            raise HTTPException(500, detail=f"Failed to connect to Quotex: {reason}")
+            print(f"❌ Failed to connect to Quotex: {reason}")
+            return {
+                "balances": {"practice": 0, "real": 0},
+                "assets": [],
+                "email": email,
+                "error": f"Connection failed: {reason}"
+            }
+        
+        print("✅ Successfully connected to Quotex")
 
-        # Fetch practice balance
-        client.set_account_mode("PRACTICE")
+        # Fetch practice balance using change_account method
+        print("💰 Fetching practice balance...")
+        await client.change_account("PRACTICE")
+        await asyncio.sleep(0.5)
         practice_balance = await client.get_balance()
+        print(f"✅ Practice balance: ${practice_balance}")
 
         # Fetch real balance
+        print("💰 Fetching real balance...")
         await client.change_account("REAL")
+        await asyncio.sleep(0.5)
         real_balance = await client.get_balance()
+        print(f"✅ Real balance: ${real_balance}")
 
-        # Using a default payout of 84 for initial filtering
-        tradable_assets = get_payout_filtered_assets(client, live_assets + otc_assets, 84)
+        # Filter tradable assets
+        print("🔍 Filtering tradable assets...")
+        all_assets = live_assets + otc_assets
+        tradable_assets = await get_payout_filtered_assets(client, all_assets, 84)
+        
+        await client.close()
+        print("🔒 Connection closed")
 
     except Exception as e:
-        print(f"An error occurred: {e}")
-        # Don't raise HTTPException here to avoid breaking the frontend completely
-    finally:
-        await client.close()
+        print(f"❌ An error occurred: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "balances": {"practice": 0, "real": 0},
+            "assets": [],
+            "email": email,
+            "error": str(e)
+        }
 
     return {
         "balances": {
@@ -103,9 +138,10 @@ async def get_initial_data():
 async def get_trade_logs():
     active_trades = []
     trade_history = []
+    daily_pnl = 0
     log_file = ROOT / "trades.log"
     if not log_file.exists():
-        return {"active_trades": [], "trade_history": []}
+        return {"active_trades": [], "trade_history": [], "daily_pnl": 0}
 
     try:
         with open(log_file, "r") as f:
@@ -126,6 +162,10 @@ async def get_trade_logs():
                     else:
                         log["balance_after"] = "N/A"
                         trade_history.append(log)
+                        # Add to daily P&L
+                        pnl = log.get("pnl", 0)
+                        if isinstance(pnl, (int, float)):
+                            daily_pnl += pnl
 
             except json.JSONDecodeError:
                 print(f"Skipping malformed log line: {line.strip()}")
@@ -133,7 +173,7 @@ async def get_trade_logs():
     except Exception as e:
         print(f"Error reading or processing trades.log: {e}")
 
-    return {"active_trades": active_trades, "trade_history": trade_history}
+    return {"active_trades": active_trades, "trade_history": trade_history, "daily_pnl": daily_pnl}
 
 
 def build_env(settings: StartSettings) -> Dict[str, str]:
@@ -176,7 +216,7 @@ async def start_bot(settings: StartSettings):
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0,
         )
-        current_settings = json.loads(settings.dict())
+        current_settings = settings.dict()
         return {"ok": True}
     except Exception as exc:
         raise HTTPException(500, detail=f"Failed to start: {exc}")
@@ -204,6 +244,34 @@ def status():
         "running": running,
         "settings": current_settings,
     }
+
+
+@app.get("/api/refresh_assets")
+async def refresh_assets(payout: float = 84):
+    load_dotenv()
+    email = os.getenv("QX_EMAIL")
+    password = os.getenv("QX_PASSWORD")
+    
+    if not email or not password:
+        raise HTTPException(400, "Missing credentials")
+    
+    try:
+        print(f"🔄 Refreshing assets with payout threshold: {payout}%")
+        client = Quotex(email=email, password=password, lang="en")
+        connected, reason = await client.connect()
+        
+        if not connected:
+            raise HTTPException(500, f"Connection failed: {reason}")
+        
+        all_assets = live_assets + otc_assets
+        tradable_assets = await get_payout_filtered_assets(client, all_assets, payout)
+        await client.close()
+        
+        return {"assets": tradable_assets}
+        
+    except Exception as e:
+        print(f"❌ Error refreshing assets: {e}")
+        raise HTTPException(500, str(e))
 
 
 app.mount("/", StaticFiles(directory=str(ROOT / "frontend"), html=True), name="static")

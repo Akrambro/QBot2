@@ -1,6 +1,13 @@
-async function api(path, opts) {
-    const res = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts || {}));
-    if (!res.ok) throw new Error(await res.text());
+async function api(path, opts = {}) {
+    const defaultHeaders = { 'Content-Type': 'application/json' };
+    const headers = Object.assign(defaultHeaders, opts.headers || {});
+    const config = Object.assign({ headers }, opts);
+    
+    const res = await fetch(path, config);
+    if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(errorText || `HTTP ${res.status}`);
+    }
     return res.json();
 }
 
@@ -66,17 +73,69 @@ async function refreshTradeLogs() {
                 <td>${t.balance_after}</td>
             </tr>`;
         });
+        
+        // Update progress tubes and daily P&L display
+        const dailyPnl = logs.daily_pnl || 0;
+        updateProgressTubes(dailyPnl);
+        
+        // Update daily P&L display
+        const dailyPnlElement = document.getElementById('dailyPnl');
+        dailyPnlElement.textContent = `$${dailyPnl.toFixed(2)}`;
+        dailyPnlElement.style.color = dailyPnl >= 0 ? 'var(--accent)' : 'var(--danger)';
     } catch (e) {
         console.error("Failed to refresh trade logs:", e);
+    }
+}
+
+function updateProgressTubes(dailyPnl = 0) {
+    const profitLimit = parseFloat(document.getElementById('profitLimit').value || '0');
+    const lossLimit = parseFloat(document.getElementById('lossLimit').value || '0');
+    const profitIsPercent = document.getElementById('profitIsPercent').value === '1';
+    const lossIsPercent = document.getElementById('lossIsPercent').value === '1';
+    
+    // Get initial balance (assuming practice balance for now)
+    const practiceBalance = parseFloat(document.getElementById('practiceBalance').textContent.replace('$', '')) || 1000;
+    
+    // Calculate actual limits
+    const actualProfitLimit = profitIsPercent ? (practiceBalance * profitLimit / 100) : profitLimit;
+    const actualLossLimit = lossIsPercent ? (practiceBalance * lossLimit / 100) : lossLimit;
+    
+    // Update profit tube
+    if (actualProfitLimit > 0) {
+        const profitProgress = Math.min(Math.max(dailyPnl / actualProfitLimit * 100, 0), 100);
+        document.getElementById('profitTube').style.width = profitProgress + '%';
+        document.getElementById('profitLabel').textContent = `$${dailyPnl.toFixed(2)} / $${actualProfitLimit.toFixed(2)}`;
+    } else {
+        document.getElementById('profitTube').style.width = '0%';
+        document.getElementById('profitLabel').textContent = `$${dailyPnl.toFixed(2)}`;
+    }
+    
+    // Update loss tube
+    if (actualLossLimit > 0) {
+        const lossProgress = Math.min(Math.max(Math.abs(Math.min(dailyPnl, 0)) / actualLossLimit * 100, 0), 100);
+        document.getElementById('lossTube').style.width = lossProgress + '%';
+        document.getElementById('lossLabel').textContent = `$${Math.abs(Math.min(dailyPnl, 0)).toFixed(2)} / $${actualLossLimit.toFixed(2)}`;
+    } else {
+        document.getElementById('lossTube').style.width = '0%';
+        document.getElementById('lossLabel').textContent = `$${Math.abs(Math.min(dailyPnl, 0)).toFixed(2)}`;
     }
 }
 
 
 async function start() {
     try {
-        await api('/api/start', { method: 'POST', body: JSON.stringify(gatherSettings()) });
+        const settings = gatherSettings();
+        console.log('Sending settings:', settings);
+        await api('/api/start', { 
+            method: 'POST', 
+            body: JSON.stringify(settings),
+            headers: { 'Content-Type': 'application/json' }
+        });
         await refreshStatus();
-    } catch (e) { alert('Start failed: ' + e.message); }
+    } catch (e) { 
+        console.error('Start error:', e);
+        alert('Start failed: ' + e.message); 
+    }
 }
 
 async function stop() {
@@ -98,12 +157,21 @@ document.getElementById('toggle').addEventListener('click', async () => {
 async function init() {
     try {
         const data = await api('/api/initial_data');
+        
         document.getElementById('practiceBalance').textContent = `$${data.balances.practice.toFixed(2)}`;
         document.getElementById('realBalance').textContent = `$${data.balances.real.toFixed(2)}`;
+        
         const assetsList = document.getElementById('assetsList');
-        assetsList.innerHTML = data.assets.join(', ');
-        // Assuming the email is returned in the initial_data endpoint.
-        // If not, a new endpoint /api/profile is needed.
+        if (data.error) {
+            console.warn('Connection issue:', data.error);
+            assetsList.innerHTML = `<span style="color: #ef4444;">Connection failed: ${data.error}</span>`;
+        } else if (data.assets && data.assets.length > 0) {
+            assetsList.innerHTML = `<span style="color: #22c55e;">${data.assets.length} assets:</span> ${data.assets.join(', ')}`;
+            console.log('Loaded assets:', data.assets);
+        } else {
+            assetsList.innerHTML = '<span style="color: #f59e0b;">No tradable assets found - check payout threshold</span>';
+        }
+        
         const profileDetails = document.getElementById('profileDetails');
         if (data.email) {
             profileDetails.textContent = data.email;
@@ -111,11 +179,52 @@ async function init() {
 
     } catch (e) {
         console.error("Failed to load initial data", e);
-        alert("Failed to load initial data: " + e.message);
+        document.getElementById('assetsList').innerHTML = `<span style="color: #ef4444;">Failed to load assets: ${e.message}</span>`;
     }
     await refreshStatus();
     await refreshTradeLogs();
 }
+
+async function refreshAssets() {
+    const assetsList = document.getElementById('assetsList');
+    const payout = parseFloat(document.getElementById('payout').value || '84');
+    
+    try {
+        assetsList.innerHTML = 'Refreshing assets...';
+        const data = await api(`/api/refresh_assets?payout=${payout}`);
+        
+        if (data.assets && data.assets.length > 0) {
+            assetsList.innerHTML = `<span style="color: #22c55e;">${data.assets.length} assets:</span> ${data.assets.join(', ')}`;
+            console.log('Refreshed assets:', data.assets);
+        } else {
+            assetsList.innerHTML = '<span style="color: #f59e0b;">No tradable assets found</span>';
+        }
+    } catch (e) {
+        console.error('Failed to refresh assets:', e);
+        assetsList.innerHTML = `<span style="color: #ef4444;">Refresh failed: ${e.message}</span>`;
+    }
+}
+
+document.getElementById('refreshAssets').addEventListener('click', refreshAssets);
+document.getElementById('payout').addEventListener('change', refreshAssets);
+
+// Update tubes when limits change
+document.getElementById('profitLimit').addEventListener('input', () => {
+    const currentPnl = parseFloat(document.getElementById('dailyPnl').textContent.replace('$', '')) || 0;
+    updateProgressTubes(currentPnl);
+});
+document.getElementById('lossLimit').addEventListener('input', () => {
+    const currentPnl = parseFloat(document.getElementById('dailyPnl').textContent.replace('$', '')) || 0;
+    updateProgressTubes(currentPnl);
+});
+document.getElementById('profitIsPercent').addEventListener('change', () => {
+    const currentPnl = parseFloat(document.getElementById('dailyPnl').textContent.replace('$', '')) || 0;
+    updateProgressTubes(currentPnl);
+});
+document.getElementById('lossIsPercent').addEventListener('change', () => {
+    const currentPnl = parseFloat(document.getElementById('dailyPnl').textContent.replace('$', '')) || 0;
+    updateProgressTubes(currentPnl);
+});
 
 init();
 setInterval(refreshStatus, 2000);

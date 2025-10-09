@@ -1,5 +1,5 @@
 git+https://github.com/cleitonleonel/pyquotex.git
 python-dotenv
 fastapi
-uvicorn
+uvicorn[standard]
 numpy
