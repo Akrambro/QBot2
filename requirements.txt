@@ -1,5 +1,6 @@
-git+https://github.com/cleitonleonel/pyquotex.git
-python-dotenv
 fastapi
-uvicorn[standard]
-numpy
+uvicorn
+python-dotenv
+pyquotex
+fake-useragent
+requests

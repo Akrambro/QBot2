@@ -57,10 +57,16 @@ def compute_signal(candles: List[Dict]) -> Tuple[str, bool]:
 
 
 async def fetch_last_candles(client: Quotex, asset: str, timeframe: int, count: int) -> List[Dict]:
-    end_from_time = time.time()
-    seconds = timeframe * count
-    candles = await client.get_candles(asset, end_from_time, seconds, timeframe)
-    return candles or []
+    try:
+        end_from_time = time.time()
+        seconds = timeframe * count
+        # Convert asset name to API format
+        api_asset = asset.replace('/', '').replace(' (OTC)', '_otc')
+        candles = await client.get_candles(api_asset, end_from_time, seconds, timeframe)
+        return candles or []
+    except Exception as e:
+        print(f"Candle fetch error for {asset}: {e}")
+        return []
 
 
 async def wait_next_candle_open(timeframe: int):
@@ -92,7 +98,7 @@ async def run_strategy_once():
         candles = await fetch_last_candles(client, asset, TIMEFRAME, 60 * 5)  # up to 5h to be safe
         if len(candles) < 6:
             continue
-        signal, valid = compute_signal(candles)
+        signal, valid, debug_info = compute_signal(candles, asset)
         if not valid:
             continue
 

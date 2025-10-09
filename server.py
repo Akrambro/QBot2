@@ -27,7 +27,8 @@ STOP_FILE = ROOT / "STOP"
 
 class StartSettings(BaseModel):
     payout: float = Field(84, ge=0, le=100)
-    timeframe: int = Field(60, ge=15, le=3600)
+    analysis_timeframe: int = Field(60, ge=15, le=3600)
+    trade_timeframe: int = Field(60, ge=15, le=3600)
     trade_percent: float = Field(2.0, ge=0.5, le=15.0)
     account: str = Field("PRACTICE")  # PRACTICE | REAL
     max_concurrent: int = Field(1, ge=1, le=10)
@@ -75,54 +76,90 @@ async def get_initial_data():
     real_balance = 0
     tradable_assets = []
 
-    try:
-        print(f"🔗 Connecting to Quotex with email: {email}")
-        client = Quotex(email=email, password=password, lang="en")
-        connected, reason = await client.connect()
+    # Retry logic for Cloudflare blocks
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            print(f"🔗 Connecting to Quotex (attempt {attempt + 1}/{max_retries})...")
+            client = Quotex(email=email, password=password, lang="en")
+            
+            # Add delay between attempts
+            if attempt > 0:
+                wait_time = 30 * attempt  # 30s, 60s delays
+                print(f"⏳ Waiting {wait_time}s to avoid rate limiting...")
+                await asyncio.sleep(wait_time)
+            
+            connected, reason = await client.connect()
         
-        if not connected:
-            print(f"❌ Failed to connect to Quotex: {reason}")
-            return {
-                "balances": {"practice": 0, "real": 0},
-                "assets": [],
-                "email": email,
-                "error": f"Connection failed: {reason}"
-            }
+            if not connected:
+                if "403" in str(reason) or "Forbidden" in str(reason):
+                    print(f"🚫 Cloudflare blocked connection (attempt {attempt + 1}): {reason}")
+                    if attempt < max_retries - 1:
+                        continue  # Try again
+                    else:
+                        return {
+                            "balances": {"practice": 0, "real": 0},
+                            "assets": [],
+                            "email": email,
+                            "error": "Cloudflare protection active. Try again in a few minutes or use VPN."
+                        }
+                else:
+                    print(f"❌ Failed to connect to Quotex: {reason}")
+                    return {
+                        "balances": {"practice": 0, "real": 0},
+                        "assets": [],
+                        "email": email,
+                        "error": f"Connection failed: {reason}"
+                    }
         
-        print("✅ Successfully connected to Quotex")
+            print("✅ Successfully connected to Quotex")
 
-        # Fetch practice balance using change_account method
-        print("💰 Fetching practice balance...")
-        await client.change_account("PRACTICE")
-        await asyncio.sleep(0.5)
-        practice_balance = await client.get_balance()
-        print(f"✅ Practice balance: ${practice_balance}")
+            # Fetch practice balance using change_account method
+            print("💰 Fetching practice balance...")
+            await client.change_account("PRACTICE")
+            await asyncio.sleep(0.5)
+            practice_balance = await client.get_balance()
+            print(f"✅ Practice balance: ${practice_balance}")
 
-        # Fetch real balance
-        print("💰 Fetching real balance...")
-        await client.change_account("REAL")
-        await asyncio.sleep(0.5)
-        real_balance = await client.get_balance()
-        print(f"✅ Real balance: ${real_balance}")
+            # Fetch real balance
+            print("💰 Fetching real balance...")
+            await client.change_account("REAL")
+            await asyncio.sleep(0.5)
+            real_balance = await client.get_balance()
+            print(f"✅ Real balance: ${real_balance}")
 
-        # Filter tradable assets
-        print("🔍 Filtering tradable assets...")
-        all_assets = live_assets + otc_assets
-        tradable_assets = await get_payout_filtered_assets(client, all_assets, 84)
+            # Filter tradable assets
+            print("🔍 Filtering tradable assets...")
+            all_assets = live_assets + otc_assets
+            tradable_assets = await get_payout_filtered_assets(client, all_assets, 84)
         
-        await client.close()
-        print("🔒 Connection closed")
-
-    except Exception as e:
-        print(f"❌ An error occurred: {e}")
-        import traceback
-        traceback.print_exc()
-        return {
-            "balances": {"practice": 0, "real": 0},
-            "assets": [],
-            "email": email,
-            "error": str(e)
-        }
+            await client.close()
+            print("🔒 Connection closed")
+            break  # Success, exit retry loop
+            
+        except Exception as e:
+            error_msg = str(e)
+            if "403" in error_msg or "Forbidden" in error_msg or "Cloudflare" in error_msg:
+                print(f"🚫 Cloudflare protection detected (attempt {attempt + 1}): {error_msg}")
+                if attempt < max_retries - 1:
+                    continue  # Try again
+                else:
+                    return {
+                        "balances": {"practice": 0, "real": 0},
+                        "assets": [],
+                        "email": email,
+                        "error": "Cloudflare protection active. Please try again later or use a VPN."
+                    }
+            else:
+                print(f"❌ An error occurred: {e}")
+                import traceback
+                traceback.print_exc()
+                return {
+                    "balances": {"practice": 0, "real": 0},
+                    "assets": [],
+                    "email": email,
+                    "error": str(e)
+                }
 
     return {
         "balances": {
@@ -131,6 +168,7 @@ async def get_initial_data():
         },
         "assets": tradable_assets,
         "email": email,
+        "daily_pnl": 0  # Initialize daily PnL
     }
 
 
@@ -148,24 +186,38 @@ async def get_trade_logs():
             lines = f.readlines()
 
         today_str = datetime.utcnow().date().isoformat()
+        seen_trades = set()  # Track unique trade IDs to avoid duplicates
 
-        for line in reversed(lines):
+        for line in lines:  # Process in order, not reversed
             if not line.strip():
                 continue
             try:
                 log = json.loads(line)
-
-                if log.get("timestamp", "").startswith(today_str):
-                    if log.get("status") == "active":
+                trade_id = log.get("id")
+                
+                if not trade_id or not log.get("timestamp", "").startswith(today_str):
+                    continue
+                
+                if log.get("status") == "active":
+                    if trade_id not in seen_trades:
                         log["live_pnl"] = "N/A"
                         active_trades.append(log)
-                    else:
+                        seen_trades.add(trade_id)
+                else:
+                    # Remove from active trades if it was there
+                    active_trades = [t for t in active_trades if t.get("id") != trade_id]
+                    
+                    # Add to history if not already there
+                    if trade_id not in seen_trades or not any(t.get("id") == trade_id for t in trade_history):
                         log["balance_after"] = "N/A"
                         trade_history.append(log)
+                        
                         # Add to daily P&L
                         pnl = log.get("pnl", 0)
                         if isinstance(pnl, (int, float)):
                             daily_pnl += pnl
+                    
+                    seen_trades.add(trade_id)
 
             except json.JSONDecodeError:
                 print(f"Skipping malformed log line: {line.strip()}")
@@ -180,7 +232,8 @@ def build_env(settings: StartSettings) -> Dict[str, str]:
     env = os.environ.copy()
     env.update({
         "QX_PAYOUT": str(settings.payout),
-        "QX_TIMEFRAME": str(settings.timeframe),
+        "QX_ANALYSIS_TIMEFRAME": str(settings.analysis_timeframe),
+        "QX_TRADE_TIMEFRAME": str(settings.trade_timeframe),
         "QX_TRADE_PERCENT": str(settings.trade_percent),
         "QX_ACCOUNT": str(settings.account),
         "QX_RUN_MINUTES": str(settings.run_minutes),
@@ -213,7 +266,7 @@ async def start_bot(settings: StartSettings):
     try:
         process = subprocess.Popen(
             [py, str(STRATEGY)], cwd=str(ROOT), env=env,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            stdout=None, stderr=None,  # Let output go to main terminal
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0,
         )
         current_settings = settings.dict()
@@ -238,11 +291,33 @@ async def stop_bot():
 
 
 @app.get("/api/status")
-def status():
+async def status():
     running = bool(process and process.poll() is None)
+    
+    # Get real-time balance if bot is running
+    current_balance = 0
+    if running:
+        try:
+            load_dotenv()
+            email = os.getenv("QX_EMAIL")
+            password = os.getenv("QX_PASSWORD")
+            
+            if email and password:
+                client = Quotex(email=email, password=password, lang="en")
+                connected, _ = await client.connect()
+                if connected:
+                    account_mode = current_settings.get("account", "PRACTICE")
+                    await client.change_account(account_mode)
+                    await asyncio.sleep(0.2)
+                    current_balance = await client.get_balance()
+                    await client.close()
+        except:
+            pass  # Ignore errors, use 0 balance
+    
     return {
         "running": running,
         "settings": current_settings,
+        "current_balance": current_balance
     }
 
 
