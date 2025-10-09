@@ -1,5 +1,4 @@
 import os
-print("--- server.py execution started ---")
 import json
 import signal
 import shutil
@@ -48,7 +47,6 @@ class StartSettings(BaseModel):
 
 
 app = FastAPI()
-app.mount("/", StaticFiles(directory=str(ROOT / "frontend"), html=True), name="static")
 
 
 process: Optional[subprocess.Popen] = None
@@ -97,6 +95,7 @@ async def get_initial_data():
             "real": real_balance,
         },
         "assets": tradable_assets,
+        "email": email,
     }
 
 
@@ -163,9 +162,6 @@ async def start_bot(settings: StartSettings):
     if process and process.poll() is None:
         raise HTTPException(400, detail="Bot already running")
 
-    if (ROOT / "trades.log").exists():
-        (ROOT / "trades.log").unlink()
-
     if STOP_FILE.exists():
         STOP_FILE.unlink()
 
@@ -208,3 +204,6 @@ def status():
         "running": running,
         "settings": current_settings,
     }
+
+
+app.mount("/", StaticFiles(directory=str(ROOT / "frontend"), html=True), name="static")
