@@ -77,23 +77,24 @@ async def get_initial_data():
     tradable_assets = []
 
     # Retry logic for Cloudflare blocks
-    max_retries = 3
+    max_retries = 2
     for attempt in range(max_retries):
         try:
             print(f"🔗 Connecting to Quotex (attempt {attempt + 1}/{max_retries})...")
             client = Quotex(email=email, password=password, lang="en")
             
-            # Add delay between attempts
+            # Add random delay between attempts
             if attempt > 0:
-                wait_time = 30 * attempt  # 30s, 60s delays
-                print(f"⏳ Waiting {wait_time}s to avoid rate limiting...")
+                import random
+                wait_time = random.randint(10, 30)  # Random 10-30s delay
+                print(f"⏳ Waiting {wait_time}s to avoid detection...")
                 await asyncio.sleep(wait_time)
             
             connected, reason = await client.connect()
         
             if not connected:
                 if "403" in str(reason) or "Forbidden" in str(reason):
-                    print(f"🚫 Cloudflare blocked connection (attempt {attempt + 1}): {reason}")
+                    print(f"🚫 Cloudflare blocked (attempt {attempt + 1})")
                     if attempt < max_retries - 1:
                         continue  # Try again
                     else:
@@ -101,7 +102,7 @@ async def get_initial_data():
                             "balances": {"practice": 0, "real": 0},
                             "assets": [],
                             "email": email,
-                            "error": "Cloudflare protection active. Try again in a few minutes or use VPN."
+                            "error": "Cloudflare protection. Wait 5-10 minutes and try again."
                         }
                 else:
                     print(f"❌ Failed to connect to Quotex: {reason}")
@@ -139,8 +140,8 @@ async def get_initial_data():
             
         except Exception as e:
             error_msg = str(e)
-            if "403" in error_msg or "Forbidden" in error_msg or "Cloudflare" in error_msg:
-                print(f"🚫 Cloudflare protection detected (attempt {attempt + 1}): {error_msg}")
+            if "403" in error_msg or "Forbidden" in error_msg:
+                print(f"🚫 Cloudflare detected (attempt {attempt + 1})")
                 if attempt < max_retries - 1:
                     continue  # Try again
                 else:
@@ -148,7 +149,7 @@ async def get_initial_data():
                         "balances": {"practice": 0, "real": 0},
                         "assets": [],
                         "email": email,
-                        "error": "Cloudflare protection active. Please try again later or use a VPN."
+                        "error": "Cloudflare protection. Wait and try again."
                     }
             else:
                 print(f"❌ An error occurred: {e}")

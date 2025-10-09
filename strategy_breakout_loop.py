@@ -234,17 +234,13 @@ async def monitor_trade_result(client: Quotex, trade_id: str, log_entry: Dict):
         active_trade_count = max(0, active_trade_count - 1)  # Ensure it doesn't go negative
 
 
-def get_seconds_to_candle_close(timeframe: int) -> int:
-    """Get seconds remaining until current candle closes"""
+async def wait_for_candle_close_and_analyze(timeframe: int):
+    """Wait until current candle closes, then analyze immediately"""
     now = int(time.time())
-    return timeframe - (now % timeframe)
-
-async def wait_for_55th_second(timeframe: int):
-    """Wait until 55th second of current candle"""
-    seconds_to_close = get_seconds_to_candle_close(timeframe)
-    if seconds_to_close > 5:  # If more than 5 seconds to close
-        wait_time = seconds_to_close - 5  # Wait until 5 seconds before close
-        await asyncio.sleep(wait_time)
+    remaining = timeframe - (now % timeframe)
+    if remaining > 0:
+        print(f"⏰ Waiting {remaining}s for candle close...")
+        await asyncio.sleep(remaining + 0.1)  # Small buffer for candle completion
 
 async def wait_next_candle_open(timeframe: int):
     now = int(time.time())
@@ -277,6 +273,7 @@ async def main():
     print(f"🚀 BOT STARTED | Mode: {ACCOUNT_MODE} | Balance: ${balance} | Trade: ${trade_amount}")
     print(f"📊 Strategies: Breakout + Engulfing | Max Concurrent: {MAX_CONCURRENT} | Timeframe: {ANALYSIS_TIMEFRAME}s")
 
+    # Start at next candle boundary
     await wait_next_candle_open(ANALYSIS_TIMEFRAME)
 
     while True:
@@ -302,33 +299,29 @@ async def main():
             last_payout_refresh = time.time()
             print(f"🎯 Assets: {len(tradable_assets)} | Balance: ${current_balance:.2f} | Daily P&L: ${daily_pnl:.2f}")
 
-        # Wait for 55th second of current candle
-        await wait_for_55th_second(ANALYSIS_TIMEFRAME)
+        # Wait for candle close, then analyze immediately
+        await wait_for_candle_close_and_analyze(ANALYSIS_TIMEFRAME)
         
-        # Check if we have less than 5 seconds to candle close
-        seconds_to_close = get_seconds_to_candle_close(ANALYSIS_TIMEFRAME)
-        if seconds_to_close > 5:
-            print(f"⏭️ Skipping - too early ({seconds_to_close}s to close)")
-            await wait_next_candle_open(ANALYSIS_TIMEFRAME)
-            continue
+        print(f"📊 Analyzing {len(tradable_assets)} assets at candle close...")
         
-        print(f"⚡ Analyzing {len(tradable_assets)} assets ({seconds_to_close}s to close)...")
-        
-        # Create analysis tasks for all assets simultaneously (no timeout)
+        # Analyze all assets immediately after candle closes
         analysis_tasks = [analyze_asset(client, asset, trade_amount) for asset in tradable_assets]
         results = await asyncio.gather(*analysis_tasks, return_exceptions=True)
         
         # Filter valid signals
         valid_trades = [r for r in results if isinstance(r, dict) and r is not None]
         
-        print(f"📊 Signals: {len(valid_trades)} | Active: {active_trade_count}/{MAX_CONCURRENT} | Balance: ${current_balance:.2f}")
+        print(f"🎯 Found {len(valid_trades)} signals | Active: {active_trade_count}/{MAX_CONCURRENT} | Balance: ${current_balance:.2f}")
         
-        # Place trades immediately for all signals
+        # Place trades immediately if signals found
         if valid_trades:
+            print(f"🚀 Placing {len(valid_trades)} trades immediately...")
             trade_tasks = [place_trade_fast(client, trade) for trade in valid_trades]
             await asyncio.gather(*trade_tasks, return_exceptions=True)
+        else:
+            print("❌ No signals found")
         
-        await wait_next_candle_open(ANALYSIS_TIMEFRAME)
+        # Continue to next cycle (already at candle boundary)
 
     print("🏁 Bot finished")
 
