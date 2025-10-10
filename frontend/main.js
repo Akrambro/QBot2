@@ -13,8 +13,6 @@ async function api(path, opts = {}) {
 
 function gatherSettings() {
     const payout = parseFloat(document.getElementById('payout').value || '84');
-    const analysisTimeframe = parseInt(document.getElementById('analysisTimeframe').value || '60', 10);
-    const tradeTimeframe = parseInt(document.getElementById('tradeTimeframe').value || '60', 10);
     const tradePercent = parseFloat(document.getElementById('tradePercent').value || '2');
     const account = document.querySelector('input[name="account"]:checked').value;
     const maxConcurrent = parseInt(document.getElementById('maxConcurrent').value || '1', 10);
@@ -22,7 +20,34 @@ function gatherSettings() {
     const daily_profit_is_percent = document.getElementById('profitIsPercent').value === '1';
     const daily_loss_limit = parseFloat(document.getElementById('lossLimit').value || '0');
     const daily_loss_is_percent = document.getElementById('lossIsPercent').value === '1';
-    return { payout, analysis_timeframe: analysisTimeframe, trade_timeframe: tradeTimeframe, trade_percent: tradePercent, account, max_concurrent: maxConcurrent, run_minutes: 0, payout_refresh_min: 10, daily_profit_limit, daily_profit_is_percent, daily_loss_limit, daily_loss_is_percent };
+    
+    // Strategy configurations
+    const breakout_strategy = {
+        enabled: document.getElementById('breakoutEnabled').checked,
+        analysis_timeframe: parseInt(document.getElementById('breakoutAnalysisTf').value || '60', 10),
+        trade_timeframe: parseInt(document.getElementById('breakoutTradeTf').value || '60', 10)
+    };
+    
+    const engulfing_strategy = {
+        enabled: document.getElementById('engulfingEnabled').checked,
+        analysis_timeframe: parseInt(document.getElementById('engulfingAnalysisTf').value || '60', 10),
+        trade_timeframe: parseInt(document.getElementById('engulfingTradeTf').value || '60', 10)
+    };
+    
+    return { 
+        payout, 
+        trade_percent: tradePercent, 
+        account, 
+        max_concurrent: maxConcurrent, 
+        run_minutes: 0, 
+        payout_refresh_min: 10, 
+        daily_profit_limit, 
+        daily_profit_is_percent, 
+        daily_loss_limit, 
+        daily_loss_is_percent,
+        breakout_strategy,
+        engulfing_strategy
+    };
 }
 
 async function refreshStatus() {
@@ -89,10 +114,12 @@ async function refreshTradeLogs() {
         const dailyPnl = logs.daily_pnl || 0;
         updateProgressTubes(dailyPnl);
         
-        // Update daily P&L display
+        // Update daily P&L display with null check
         const dailyPnlElement = document.getElementById('dailyPnl');
-        dailyPnlElement.textContent = `$${dailyPnl.toFixed(2)}`;
-        dailyPnlElement.style.color = dailyPnl >= 0 ? 'var(--accent)' : 'var(--danger)';
+        if (dailyPnlElement) {
+            dailyPnlElement.textContent = `$${dailyPnl.toFixed(2)}`;
+            dailyPnlElement.style.color = dailyPnl >= 0 ? 'var(--accent)' : 'var(--danger)';
+        }
     } catch (e) {
         console.error("Failed to refresh trade logs:", e);
     }
@@ -218,24 +245,24 @@ async function refreshAssets() {
     }
 }
 
-document.getElementById('refreshAssets').addEventListener('click', refreshAssets);
-document.getElementById('payout').addEventListener('change', refreshAssets);
+document.getElementById('refreshAssets')?.addEventListener('click', refreshAssets);
+document.getElementById('payout')?.addEventListener('change', refreshAssets);
 
 // Update tubes when limits change
-document.getElementById('profitLimit').addEventListener('input', () => {
-    const currentPnl = parseFloat(document.getElementById('dailyPnl').textContent.replace('$', '')) || 0;
+document.getElementById('profitLimit')?.addEventListener('input', () => {
+    const currentPnl = parseFloat(document.getElementById('dailyPnl')?.textContent?.replace('$', '') || '0');
     updateProgressTubes(currentPnl);
 });
-document.getElementById('lossLimit').addEventListener('input', () => {
-    const currentPnl = parseFloat(document.getElementById('dailyPnl').textContent.replace('$', '')) || 0;
+document.getElementById('lossLimit')?.addEventListener('input', () => {
+    const currentPnl = parseFloat(document.getElementById('dailyPnl')?.textContent?.replace('$', '') || '0');
     updateProgressTubes(currentPnl);
 });
-document.getElementById('profitIsPercent').addEventListener('change', () => {
-    const currentPnl = parseFloat(document.getElementById('dailyPnl').textContent.replace('$', '')) || 0;
+document.getElementById('profitIsPercent')?.addEventListener('change', () => {
+    const currentPnl = parseFloat(document.getElementById('dailyPnl')?.textContent?.replace('$', '') || '0');
     updateProgressTubes(currentPnl);
 });
-document.getElementById('lossIsPercent').addEventListener('change', () => {
-    const currentPnl = parseFloat(document.getElementById('dailyPnl').textContent.replace('$', '')) || 0;
+document.getElementById('lossIsPercent')?.addEventListener('change', () => {
+    const currentPnl = parseFloat(document.getElementById('dailyPnl')?.textContent?.replace('$', '') || '0');
     updateProgressTubes(currentPnl);
 });
 

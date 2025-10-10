@@ -29,17 +29,52 @@
                     <input type="number" id="payout" min="50" max="100" step="1" value="84" />
                 </div>
                 <div class="field">
-                    <label>Analysis Timeframe (seconds)</label>
-                    <input type="number" id="analysisTimeframe" min="15" max="3600" step="15" value="60" />
-                </div>
-                <div class="field">
-                    <label>Trade Expiry (seconds)</label>
-                    <input type="number" id="tradeTimeframe" min="15" max="3600" step="15" value="60" />
-                </div>
-                <div class="field">
                     <label>Max concurrent trades</label>
                     <input type="range" id="maxConcurrent" min="1" max="10" step="1" value="1" />
                     <span id="maxConcurrentLabel">1</span>
+                </div>
+            </div>
+
+            <!-- Strategy Selection -->
+            <div class="card span-2">
+                <h2>Strategy Configuration</h2>
+                <div class="strategy-config">
+                    <div class="strategy-item">
+                        <div class="strategy-header">
+                            <input type="checkbox" id="breakoutEnabled" checked />
+                            <label for="breakoutEnabled"><strong>Breakout Strategy</strong></label>
+                        </div>
+                        <div class="strategy-settings">
+                            <div class="field-row">
+                                <div class="field">
+                                    <label>Analysis TF (s)</label>
+                                    <input type="number" id="breakoutAnalysisTf" min="15" max="3600" step="15" value="60" />
+                                </div>
+                                <div class="field">
+                                    <label>Trade Expiry (s)</label>
+                                    <input type="number" id="breakoutTradeTf" min="15" max="3600" step="15" value="60" />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="strategy-item">
+                        <div class="strategy-header">
+                            <input type="checkbox" id="engulfingEnabled" checked />
+                            <label for="engulfingEnabled"><strong>Engulfing Strategy</strong></label>
+                        </div>
+                        <div class="strategy-settings">
+                            <div class="field-row">
+                                <div class="field">
+                                    <label>Analysis TF (s)</label>
+                                    <input type="number" id="engulfingAnalysisTf" min="15" max="3600" step="15" value="60" />
+                                </div>
+                                <div class="field">
+                                    <label>Trade Expiry (s)</label>
+                                    <input type="number" id="engulfingTradeTf" min="15" max="3600" step="15" value="60" />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -164,12 +199,16 @@
     <script>
         const pct = document.getElementById('tradePercent');
         const pctLabel = document.getElementById('percentLabel');
-        pct.addEventListener('input', () => pctLabel.textContent = pct.value + '%');
+        if (pct && pctLabel) {
+            pct.addEventListener('input', () => pctLabel.textContent = pct.value + '%');
+        }
 
         const mc = document.getElementById('maxConcurrent');
         const mcLabel = document.getElementById('maxConcurrentLabel');
-        mc.addEventListener('input', () => mcLabel.textContent = mc.value);
-        mcLabel.textContent = mc.value;
+        if (mc && mcLabel) {
+            mc.addEventListener('input', () => mcLabel.textContent = mc.value);
+            mcLabel.textContent = mc.value;
+        }
     </script>
 </body>
 </html>

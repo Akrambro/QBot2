@@ -25,16 +25,22 @@ STRATEGY = ROOT / "strategy_breakout_loop.py"
 STOP_FILE = ROOT / "STOP"
 
 
-class StartSettings(BaseModel):
-    payout: float = Field(84, ge=0, le=100)
+class StrategyConfig(BaseModel):
+    enabled: bool = Field(True)
     analysis_timeframe: int = Field(60, ge=15, le=3600)
     trade_timeframe: int = Field(60, ge=15, le=3600)
+
+class StartSettings(BaseModel):
+    payout: float = Field(84, ge=0, le=100)
     trade_percent: float = Field(2.0, ge=0.5, le=15.0)
     account: str = Field("PRACTICE")  # PRACTICE | REAL
     max_concurrent: int = Field(1, ge=1, le=10)
     run_minutes: int = Field(0, ge=0)  # 0 => indefinite
     payout_refresh_min: int = Field(10, ge=1, le=120)
-    # The daily limit fields are now included in the settings
+    # Strategy configurations
+    breakout_strategy: StrategyConfig = Field(default_factory=lambda: StrategyConfig())
+    engulfing_strategy: StrategyConfig = Field(default_factory=lambda: StrategyConfig())
+    # Daily limit fields
     daily_profit_limit: float = Field(0)
     daily_profit_is_percent: bool = Field(True)
     daily_loss_limit: float = Field(0)
@@ -187,9 +193,10 @@ async def get_trade_logs():
             lines = f.readlines()
 
         today_str = datetime.utcnow().date().isoformat()
-        seen_trades = set()  # Track unique trade IDs to avoid duplicates
+        trade_states = {}  # Track latest state of each trade
 
-        for line in lines:  # Process in order, not reversed
+        # Process all lines to get latest state of each trade
+        for line in lines:
             if not line.strip():
                 continue
             try:
@@ -199,30 +206,29 @@ async def get_trade_logs():
                 if not trade_id or not log.get("timestamp", "").startswith(today_str):
                     continue
                 
-                if log.get("status") == "active":
-                    if trade_id not in seen_trades:
-                        log["live_pnl"] = "N/A"
-                        active_trades.append(log)
-                        seen_trades.add(trade_id)
-                else:
-                    # Remove from active trades if it was there
-                    active_trades = [t for t in active_trades if t.get("id") != trade_id]
-                    
-                    # Add to history if not already there
-                    if trade_id not in seen_trades or not any(t.get("id") == trade_id for t in trade_history):
-                        log["balance_after"] = "N/A"
-                        trade_history.append(log)
-                        
-                        # Add to daily P&L
-                        pnl = log.get("pnl", 0)
-                        if isinstance(pnl, (int, float)):
-                            daily_pnl += pnl
-                    
-                    seen_trades.add(trade_id)
+                trade_states[trade_id] = log
 
             except json.JSONDecodeError:
-                print(f"Skipping malformed log line: {line.strip()}")
                 continue
+        
+        # Separate active and completed trades
+        for trade_id, log in trade_states.items():
+            if log.get("status") == "active":
+                log["live_pnl"] = "N/A"
+                active_trades.append(log)
+            else:
+                log["balance_after"] = "N/A"
+                trade_history.append(log)
+                
+                # Add to daily P&L
+                pnl = log.get("pnl", 0)
+                if isinstance(pnl, (int, float)):
+                    daily_pnl += pnl
+        
+        # Sort trade history by timestamp (newest first) and limit to 30
+        trade_history.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        trade_history = trade_history[:30]
+                    
     except Exception as e:
         print(f"Error reading or processing trades.log: {e}")
 
@@ -233,8 +239,6 @@ def build_env(settings: StartSettings) -> Dict[str, str]:
     env = os.environ.copy()
     env.update({
         "QX_PAYOUT": str(settings.payout),
-        "QX_ANALYSIS_TIMEFRAME": str(settings.analysis_timeframe),
-        "QX_TRADE_TIMEFRAME": str(settings.trade_timeframe),
         "QX_TRADE_PERCENT": str(settings.trade_percent),
         "QX_ACCOUNT": str(settings.account),
         "QX_RUN_MINUTES": str(settings.run_minutes),
@@ -244,6 +248,13 @@ def build_env(settings: StartSettings) -> Dict[str, str]:
         "QX_DAILY_LOSS": str(settings.daily_loss_limit),
         "QX_DAILY_LOSS_IS_PERCENT": "1" if settings.daily_loss_is_percent else "0",
         "QX_MAX_CONCURRENT": str(settings.max_concurrent),
+        # Strategy configurations
+        "QX_BREAKOUT_ENABLED": "1" if settings.breakout_strategy.enabled else "0",
+        "QX_BREAKOUT_ANALYSIS_TF": str(settings.breakout_strategy.analysis_timeframe),
+        "QX_BREAKOUT_TRADE_TF": str(settings.breakout_strategy.trade_timeframe),
+        "QX_ENGULFING_ENABLED": "1" if settings.engulfing_strategy.enabled else "0",
+        "QX_ENGULFING_ANALYSIS_TF": str(settings.engulfing_strategy.analysis_timeframe),
+        "QX_ENGULFING_TRADE_TF": str(settings.engulfing_strategy.trade_timeframe),
     })
     return env
 

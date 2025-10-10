@@ -86,12 +86,10 @@ Once the server is running, open your web browser and navigate to:
 [http://127.0.0.1:8000](http://127.0.0.1:8000)
 
 
-The port 8000 is already in use. Let me kill the existing process and start fresh:
+# The port 8000 is already in use. Let me kill the existing process and start fresh:
 
-Kill any existing processes using port 8000
-shell command:
-pkill -f "python main.py" || pkill -f "uvicorn" || fuser -k 8000/tcp || true
+## Kill any existing processes using port 8000
+shell command: pkill -f "python main.py" || pkill -f "uvicorn" || fuser -k 8000/tcp || true
 
-Check what's using port 8000 and kill it
-shell command:
-lsof -ti:8000 | xargs kill -9 2>/dev/null || true
+## Check what's using port 8000 and kill it
+shell command: lsof -ti:8000 | xargs kill -9 2>/dev/null || true

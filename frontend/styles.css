@@ -50,6 +50,15 @@ body {
 }
 .span-2 { grid-column: span 2; }
 .field { margin: 12px 0; }
+
+.field input[type="number"] {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid #334155;
+    border-radius: 4px;
+    background: #0b1220;
+    color: var(--text);
+}
 label {
     display: block;
     margin-bottom: 6px;
@@ -203,4 +212,44 @@ input[type="range"] { width: 100%; }
     color: var(--text);
     text-shadow: 0 1px 2px rgba(0,0,0,0.8);
     z-index: 1;
+}
+
+.strategy-config {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.strategy-item {
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 1rem;
+    background: #0b1220;
+}
+
+.strategy-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.strategy-header input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent);
+}
+
+.strategy-settings {
+    margin-left: 1.5rem;
+}
+
+.field-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+
+.field-row .field {
+    margin-bottom: 0;
 }
