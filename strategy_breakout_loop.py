@@ -3,6 +3,7 @@ import time
 import asyncio
 import json
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import List, Dict, Tuple, Optional
 
 from dotenv import load_dotenv
@@ -11,6 +12,13 @@ from pyquotex.stable_api import Quotex
 from assets import live_assets, otc_assets
 from utils import get_payout_filtered_assets
 from strategies.engulfing_strategy import compute_engulfing_signal
+from strategy_breakout import compute_signal as _compute_breakout_signal
+
+def compute_breakout_signal_wrapper(candles: List[Dict]) -> Tuple[str, bool, str]:
+    """Wrapper to match expected signature"""
+    signal, valid = _compute_breakout_signal(candles)
+    msg = f"Breakout {signal.upper()}" if valid else "No breakout"
+    return signal, valid, msg
 
 
 load_dotenv()
@@ -36,86 +44,30 @@ ENGULFING_ENABLED = os.getenv("QX_ENGULFING_ENABLED", "1") == "1"
 ENGULFING_ANALYSIS_TF = int(os.getenv("QX_ENGULFING_ANALYSIS_TF", "60"))
 ENGULFING_TRADE_TF = int(os.getenv("QX_ENGULFING_TRADE_TF", "60"))
 
-# Global state
+# Global state with thread safety
+import threading
+state_lock = threading.Lock()
 active_trade_count = 0
 current_balance = 0
 daily_pnl = 0
 active_trades_by_asset = {}  # Track active trades per asset
+failed_assets = set()  # Track assets with not_price errors
 
 
-def compute_breakout_signal(candles: List[Dict]) -> Tuple[str, bool, str]:
-    if len(candles) < 6:
-        return "", False, "Insufficient candles"
-    
-    prev, curr = candles[-2], candles[-1]
-    window = candles[-6:-1]
-    
-    prev_low, prev_high = float(prev["low"]), float(prev["high"])
-    curr_close = float(curr["close"])
-    
-    min_low = min(float(c["low"]) for c in window)
-    max_high = max(float(c["high"]) for c in window)
-    
-    if prev_low == min_low and curr_close > prev_high:
-        return "call", True, "Breakout CALL"
-    if prev_high == max_high and curr_close < prev_low:
-        return "put", True, "Breakout PUT"
-    
-    return "", False, "No breakout"
+# Removed local compute_breakout_signal - using imported version
 
 
-def compute_engulfing_signal(candles: List[Dict]) -> Tuple[str, bool, str]:
-    if len(candles) < 6:
-        return "", False, "Insufficient candles"
-    
-    # Check for sideways market (alternating pattern)
-    last_4 = candles[-4:]
-    alternating = True
-    for i in range(1, len(last_4)):
-        curr_bullish = float(last_4[i]["close"]) > float(last_4[i]["open"])
-        prev_bullish = float(last_4[i-1]["close"]) > float(last_4[i-1]["open"])
-        if curr_bullish == prev_bullish:
-            alternating = False
-            break
-    
-    if alternating:
-        return "", False, "Sideways market detected"
-    
-    prev, curr = candles[-2], candles[-1]
-    
-    prev_open, prev_close = float(prev["open"]), float(prev["close"])
-    prev_high, prev_low = float(prev["high"]), float(prev["low"])
-    
-    curr_open, curr_close = float(curr["open"]), float(curr["close"])
-    curr_high, curr_low = float(curr["high"]), float(curr["low"])
-    
-    # Check if current engulfs previous
-    if not (curr_high > prev_high and curr_low < prev_low):
-        return "", False, "No engulfing pattern"
-    
-    # Check candle strength (body vs wicks)
-    body_size = abs(curr_close - curr_open)
-    total_size = curr_high - curr_low
-    if body_size <= 0.5 * total_size:
-        return "", False, "Weak engulfing candle"
-    
-    # Bullish engulfing
-    if curr_close > curr_open and prev_close < prev_open:
-        return "call", True, "Engulfing CALL"
-    
-    # Bearish engulfing
-    if curr_close < curr_open and prev_close > prev_open:
-        return "put", True, "Engulfing PUT"
-    
-    return "", False, "No valid engulfing"
+# Removed local compute_engulfing_signal - using imported version
 
 
 async def fetch_candles_for_strategy(client: Quotex, asset: str, timeframe: int) -> Optional[List[Dict]]:
     try:
         api_asset = asset.replace('/', '').replace(' (OTC)', '_otc')
+        # Fix timeframe units - timeframe is already in seconds
         candles = await client.get_candles(api_asset, time.time(), timeframe * 60, timeframe)
         return candles if candles and len(candles) >= 6 else None
-    except:
+    except Exception as e:
+        print(f"⚠️ Candle fetch error for {asset}: {e}")
         return None
 
 
@@ -136,43 +88,52 @@ async def analyze_asset(client: Quotex, asset: str, trade_amount: float) -> Opti
     if BREAKOUT_ENABLED:
         candles = await fetch_candles_for_strategy(client, asset, BREAKOUT_ANALYSIS_TF)
         if candles and len(candles) >= 6:
-            signal, valid, msg = compute_breakout_signal(candles)
-            if valid:
-                results.append({
-                    "asset": asset,
-                    "signal": signal,
-                    "strategy": "breakout",
-                    "message": msg,
-                    "amount": trade_amount,
-                    "trade_timeframe": BREAKOUT_TRADE_TF
-                })
+            try:
+                signal, valid, msg = compute_breakout_signal_wrapper(candles)
+                if valid:  # Only log when signal found to reduce noise
+                    print(f"🔍 Breakout {asset}: {signal} | {valid} | {msg}")
+                    results.append({
+                        "asset": asset,
+                        "signal": signal,
+                        "strategy": "breakout",
+                        "message": msg,
+                        "amount": trade_amount,
+                        "trade_timeframe": BREAKOUT_TRADE_TF
+                    })
+            except Exception as e:
+                print(f"❌ Breakout strategy error for {asset}: {e}")
     
     # Test engulfing strategy if enabled
     if ENGULFING_ENABLED:
         candles = await fetch_candles_for_strategy(client, asset, ENGULFING_ANALYSIS_TF)
         if candles and len(candles) >= 6:
-            signal, valid, msg = compute_engulfing_signal(candles)
-            if valid:
-                results.append({
-                    "asset": asset,
-                    "signal": signal,
-                    "strategy": "engulfing",
-                    "message": msg,
-                    "amount": trade_amount,
-                    "trade_timeframe": ENGULFING_TRADE_TF
-                })
+            try:
+                signal, valid, msg = compute_engulfing_signal(candles)
+                print(f"🔍 Engulfing {asset}: {signal} | {valid} | {msg}")
+                if valid:
+                    results.append({
+                        "asset": asset,
+                        "signal": signal,
+                        "strategy": "engulfing",
+                        "message": msg,
+                        "amount": trade_amount,
+                        "trade_timeframe": ENGULFING_TRADE_TF
+                    })
+            except Exception as e:
+                print(f"❌ Engulfing strategy error for {asset}: {e}")
     
     # Return first valid signal (priority: breakout, then engulfing)
     return results[0] if results else None
 
 
 async def place_trade_fast(client: Quotex, trade_data: Dict) -> bool:
-    global active_trade_count, current_balance, active_trades_by_asset
+    global active_trade_count, current_balance, active_trades_by_asset, failed_assets
+    
+    # Skip assets that recently failed with not_price
+    if trade_data["asset"] in failed_assets:
+        return False
     
     try:
-        # Quick timeout check before placing trade
-        placement_start = time.time()
-        
         api_asset = trade_data["asset"].replace('/', '').replace(' (OTC)', '_otc')
         success, payload = await asyncio.wait_for(
             client.buy(
@@ -182,14 +143,17 @@ async def place_trade_fast(client: Quotex, trade_data: Dict) -> bool:
                 duration=trade_data["trade_timeframe"],
                 time_mode="TIME"
             ),
-            timeout=5.0  # 5 second timeout for individual trade placement
+            timeout=5.0
         )
         
         if success and payload.get("id"):
             trade_id = payload["id"]
-            active_trade_count += 1
-            current_balance -= trade_data["amount"]
-            active_trades_by_asset[trade_data["asset"]] = trade_id  # Track by asset
+            
+            # Thread-safe state updates
+            with state_lock:
+                active_trade_count += 1
+                current_balance -= trade_data["amount"]
+                active_trades_by_asset[trade_data["asset"]] = trade_id
             
             print(f"✅ {trade_data['strategy'].upper()} {trade_data['signal'].upper()} on {trade_data['asset']} - ID: {trade_id}")
             
@@ -215,7 +179,15 @@ async def place_trade_fast(client: Quotex, trade_data: Dict) -> bool:
             
             return True
         else:
-            print(f"❌ Trade failed on {trade_data['asset']}: {payload}")
+            # Handle specific error codes
+            error_msg = payload if isinstance(payload, str) else str(payload)
+            if "not_price" in error_msg:
+                print(f"⚠️ {trade_data['asset']} market closed - adding to skip list")
+                failed_assets.add(trade_data["asset"])  # Skip this asset for future attempts
+            elif "not_enough_money" in error_msg:
+                print(f"⚠️ Insufficient balance for {trade_data['asset']}")
+            else:
+                print(f"❌ Trade failed on {trade_data['asset']}: {error_msg}")
             return False
     except asyncio.TimeoutError:
         print(f"⏰ Trade timeout on {trade_data['asset']} (>5s)")
@@ -231,10 +203,11 @@ async def monitor_trade_result(client: Quotex, trade_id: str, log_entry: Dict, a
     def cleanup_trade():
         """Force cleanup this trade from counters"""
         global active_trade_count, active_trades_by_asset
-        if active_trade_count > 0:
-            active_trade_count -= 1
-        if asset in active_trades_by_asset:
-            del active_trades_by_asset[asset]
+        with state_lock:
+            if active_trade_count > 0:
+                active_trade_count -= 1
+            if asset in active_trades_by_asset:
+                del active_trades_by_asset[asset]
         print(f"🧹 Cleaned up trade {trade_id} for {asset} | Active: {active_trade_count}/{MAX_CONCURRENT}")
     
     try:
@@ -245,23 +218,28 @@ async def monitor_trade_result(client: Quotex, trade_id: str, log_entry: Dict, a
         won = await client.check_win(trade_id)
         profit = client.get_profit()
         
-        # Update balance and PnL
-        if won:
-            current_balance += log_entry["amount"] + profit
-        else:
-            current_balance += profit  # Negative value
-        
-        daily_pnl += profit
+        # Thread-safe balance and PnL updates
+        with state_lock:
+            # Fix balance calculation - profit should be net result
+            if won:
+                current_balance += log_entry["amount"] + profit  # Get back amount + profit
+            # For loss, we already deducted amount, so no change needed
+            daily_pnl += profit
         
         # Update log entry
         log_entry["status"] = "win" if won else "loss"
         log_entry["pnl"] = profit
-        log_entry["timestamp"] = datetime.utcnow().isoformat()
+        # Get the current time for Asia/Kolkata
+        now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))  
+        log_entry["timestamp"] = now_ist.isoformat()
         
-        # Write final result and clean old trades
-        cleanup_old_trades()
-        with open("trades.log", "a") as f:
-            f.write(json.dumps(log_entry) + "\n")
+        # Thread-safe file operations
+        try:
+            cleanup_old_trades()
+            with open("trades.log", "a") as f:
+                f.write(json.dumps(log_entry) + "\n")
+        except Exception as file_error:
+            print(f"⚠️ Log write error: {file_error}")
         
         result = "WON" if won else "LOST"
         print(f"🔔 Trade {trade_id} {result}: ${profit:.2f} | Daily P&L: ${daily_pnl:.2f}")
@@ -270,24 +248,26 @@ async def monitor_trade_result(client: Quotex, trade_id: str, log_entry: Dict, a
         cleanup_trade()
         
     except Exception as e:
+        import traceback
         print(f"❌ Error monitoring trade {trade_id}: {e}")
-        # Force cleanup on any error
+        print(f"Stack trace: {traceback.format_exc()}")
         cleanup_trade()
 
 def cleanup_old_trades():
-    """Keep only last 30 trades in log file"""
+    """Keep only last 30 trades in log file with thread safety"""
     try:
         log_file = "trades.log"
         if not os.path.exists(log_file):
             return
-            
-        with open(log_file, "r") as f:
-            lines = f.readlines()
         
-        # Keep only last 30 lines
-        if len(lines) > 30:
-            with open(log_file, "w") as f:
-                f.writelines(lines[-30:])
+        # Use thread lock instead of file lock for cross-platform compatibility
+        with state_lock:
+            with open(log_file, "r") as f:
+                lines = f.readlines()
+            
+            if len(lines) > 30:
+                with open(log_file, "w") as f:
+                    f.writelines(lines[-30:])
                 
     except Exception as e:
         print(f"⚠️ Trade cleanup error: {e}")
@@ -309,9 +289,16 @@ async def wait_for_candle_close_and_analyze():
     min_timeframe = min(timeframes)
     now = int(time.time())
     remaining = min_timeframe - (now % min_timeframe)
+    
+    # Avoid waiting full period if already at boundary
+    if remaining == min_timeframe:
+        remaining = 0
+    
     if remaining > 0:
         print(f"⏰ Waiting {remaining}s for candle close...")
         await asyncio.sleep(remaining + 0.1)
+    else:
+        print("📊 At candle boundary, analyzing immediately...")
 
 async def get_actual_active_trades(client: Quotex) -> List[Dict]:
     """Get actual active trades from API to sync with our counter"""
@@ -324,7 +311,14 @@ async def get_actual_active_trades(client: Quotex) -> List[Dict]:
 async def wait_next_candle_open(timeframe: int):
     now = int(time.time())
     remaining = timeframe - (now % timeframe)
-    await asyncio.sleep(remaining + 0.05)
+    
+    # Avoid waiting full period if already at boundary
+    if remaining == timeframe:
+        remaining = 0
+        
+    if remaining > 0:
+        print(f"⏰ Waiting {remaining}s for next candle open...")
+        await asyncio.sleep(remaining + 0.05)
 
 
 async def main():
@@ -358,10 +352,11 @@ async def main():
     print(f"🚀 BOT STARTED | Mode: {ACCOUNT_MODE} | Balance: ${balance} | Trade: ${trade_amount}")
     print(f"📊 Strategies: {', '.join(enabled_strategies)} | Max Concurrent: {MAX_CONCURRENT}")
 
-    # Force reset active trades at startup
+    # Thread-safe startup sync
     actual_active = await get_actual_active_trades(client)
-    active_trade_count = len(actual_active)
-    active_trades_by_asset.clear()
+    with state_lock:
+        active_trade_count = len(actual_active)
+        active_trades_by_asset.clear()
     print(f"🔄 Startup sync: Found {active_trade_count} actual active trades")
     
     # Start at next candle boundary (use shortest timeframe)
@@ -391,23 +386,26 @@ async def main():
                 print(f"🛑 LOSS LIMIT REACHED: ${daily_pnl:.2f} <= ${-limit:.2f}")
                 break
 
-        # Refresh assets
+        # Refresh assets and clear failed assets list periodically
         if time.time() - last_payout_refresh > PAYOUT_REFRESH_MIN * 60 or not tradable_assets:
             tradable_assets = await get_payout_filtered_assets(client, ASSET_LIST, PAYOUT_THRESHOLD)
             last_payout_refresh = time.time()
+            # Clear failed assets list on refresh to retry them
+            failed_assets.clear()
+            print(f"🔄 Cleared failed assets list - will retry all assets")
         
-        # Force reset active trades if count is stuck
+        # Thread-safe active trades sync
         actual_active = await get_actual_active_trades(client)
-        if len(actual_active) == 0 and (active_trade_count > 0 or active_trades_by_asset):
-            print(f"🔄 RESETTING: No actual active trades found, clearing stuck counters")
-            active_trade_count = 0
-            active_trades_by_asset.clear()
-        elif len(actual_active) != active_trade_count:
-            print(f"🔄 SYNCING: Actual active trades ({len(actual_active)}) != counter ({active_trade_count})")
-            active_trade_count = len(actual_active)
-            # Keep only trades that are actually active
-            active_trades_by_asset = {asset: trade_id for asset, trade_id in active_trades_by_asset.items() 
-                                    if any(t.get('id') == trade_id for t in actual_active)}
+        with state_lock:
+            if len(actual_active) == 0 and (active_trade_count > 0 or active_trades_by_asset):
+                print(f"🔄 RESETTING: No actual active trades found, clearing stuck counters")
+                active_trade_count = 0
+                active_trades_by_asset.clear()
+            elif len(actual_active) != active_trade_count:
+                print(f"🔄 SYNCING: Actual active trades ({len(actual_active)}) != counter ({active_trade_count})")
+                active_trade_count = len(actual_active)
+                active_trades_by_asset = {asset: trade_id for asset, trade_id in active_trades_by_asset.items() 
+                                        if any(t.get('id') == trade_id for t in actual_active)}
             
         print(f"🎯 Assets: {len(tradable_assets)} | Active: {active_trade_count}/{MAX_CONCURRENT} | Balance: ${current_balance:.2f} | Daily P&L: ${daily_pnl:.2f}")
 
@@ -418,8 +416,14 @@ async def main():
         analysis_start = time.time()
         print(f"📊 Analyzing {len(tradable_assets)} assets at candle close...")
         
-        # Analyze all assets immediately after candle closes
-        analysis_tasks = [analyze_asset(client, asset, trade_amount) for asset in tradable_assets]
+        # Filter out assets that recently failed with not_price
+        active_assets = [asset for asset in tradable_assets if asset not in failed_assets]
+        
+        if len(active_assets) < len(tradable_assets):
+            print(f"⚠️ Skipping {len(tradable_assets) - len(active_assets)} assets with recent failures")
+        
+        # Analyze active assets
+        analysis_tasks = [analyze_asset(client, asset, trade_amount) for asset in active_assets]
         results = await asyncio.gather(*analysis_tasks, return_exceptions=True)
         
         # Filter valid signals
@@ -428,9 +432,9 @@ async def main():
         analysis_time = time.time() - analysis_start
         print(f"🎯 Found {len(valid_trades)} signals in {analysis_time:.1f}s | Active: {active_trade_count}/{MAX_CONCURRENT}")
         
-        # Check if we're within 10-second window
-        if analysis_time > 10.0:
-            print(f"⏰ TIMEOUT: Analysis took {analysis_time:.1f}s > 10s, skipping trades")
+        # Check if we're within 15-second window
+        if analysis_time > 15.0:
+            print(f"⏰ TIMEOUT: Analysis took {analysis_time:.1f}s > 15s, skipping trades")
         elif valid_trades and active_trade_count < MAX_CONCURRENT:
             available_slots = MAX_CONCURRENT - active_trade_count
             trades_to_place = valid_trades[:available_slots]

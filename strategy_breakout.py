@@ -57,10 +57,10 @@ def compute_signal(candles: List[Dict]) -> Tuple[str, bool]:
         prev_is_green = prev_close > prev_open
         curr_is_green = curr_close > curr_open
         
-       # if prev_is_green and prev_close == prev_high:
-       #     return "", False  # Reject: Previous green candle close=high
-       # if curr_is_green and curr_close == curr_high:
-       #     return "", False  # Reject: Current green candle close=high
+        if prev_is_green and prev_close == prev_high:
+            return "", False  # Reject: Previous green candle close=high
+        if curr_is_green and curr_close == curr_high:
+            return "", False  # Reject: Current green candle close=high
             
         return "call", True
 
@@ -70,9 +70,10 @@ def compute_signal(candles: List[Dict]) -> Tuple[str, bool]:
         prev_is_red = prev_close < prev_open
         curr_is_red = curr_close < curr_open
         
-        #if prev_is_red and prev_close == prev_low:
-        #    return "", False  # Reject: Previous red candle close=low
-        #    return "", False  # Reject: Current red candle close=low
+        if prev_is_red and prev_close == prev_low:
+            return "", False  # Reject: Previous red candle close=low
+        if curr_is_red and curr_close == curr_low:
+            return "", False  # Reject: Current red candle close=low
             
         return "put", True
 

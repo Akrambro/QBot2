@@ -49,20 +49,20 @@ def compute_engulfing_signal(candles):
     # Bullish Engulfing: Current bullish engulfs previous bearish
     if curr_close > curr_open and prev_close < prev_open:
         # Filter: No close=high for green candle or close=low for red candle
-        #if prev_close == prev_low:  # Previous red candle close=low
-        #    return "", False, "Prev red candle close=low"
-        #if curr_close == curr_high:  # Current green candle close=high
-        #    return "", False, "Curr green candle close=high"
+        if prev_close == prev_low:  # Previous red candle close=low
+            return "", False, "Prev red candle close=low"
+        if curr_close == curr_high:  # Current green candle close=high
+            return "", False, "Curr green candle close=high"
             
         return "call", True, "Bullish Engulfing"
     
     # Bearish Engulfing: Current bearish engulfs previous bullish  
     if curr_close < curr_open and prev_close > prev_open:
         # Filter: No close=high for green candle or close=low for red candle
-        #if prev_close == prev_high:  # Previous green candle close=high
-        #    return "", False, "Prev green candle close=high"
-        #if curr_close == curr_low:  # Current red candle close=low
-        #    return "", False, "Curr red candle close=low"
+        if prev_close == prev_high:  # Previous green candle close=high
+            return "", False, "Prev green candle close=high"
+        if curr_close == curr_low:  # Current red candle close=low
+            return "", False, "Curr red candle close=low"
             
         return "put", True, "Bearish Engulfing"
     
