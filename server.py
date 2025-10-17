@@ -18,10 +18,27 @@ from pyquotex.stable_api import Quotex
 from assets import live_assets, otc_assets
 from utils import get_payout_filtered_assets
 
+# Global shutdown flag
+shutdown_requested = False
+
+def signal_handler(signum, frame):
+    global shutdown_requested, process
+    print(f"\n🛑 Server shutdown requested")
+    shutdown_requested = True
+    if process and process.poll() is None:
+        try:
+            process.terminate()
+        except:
+            pass
+    os._exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
 
 ROOT = Path(__file__).parent
 VENV_PY = ROOT / ".venv" / "Scripts" / "python.exe"
-STRATEGY = ROOT / "strategy_breakout_loop.py"
+STRATEGY = ROOT / "trading_loop.py"
 STOP_FILE = ROOT / "STOP"
 
 
@@ -216,7 +233,7 @@ async def get_trade_logs():
             if log.get("status") == "active":
                 log["live_pnl"] = "N/A"
                 active_trades.append(log)
-            else:
+            elif log.get("status") in ["win", "loss"]:
                 log["balance_after"] = "N/A"
                 trade_history.append(log)
                 
@@ -296,7 +313,11 @@ async def stop_bot():
         try:
             if os.name == "nt":
                 process.send_signal(signal.CTRL_BREAK_EVENT)
+                await asyncio.sleep(2.0)
             process.terminate()
+            await asyncio.sleep(1.0)
+            if process.poll() is None:
+                process.kill()
         except Exception:
             pass
     return {"ok": True}

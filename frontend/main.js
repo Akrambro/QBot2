@@ -99,15 +99,21 @@ async function refreshTradeLogs() {
         });
 
         logs.trade_history.forEach(t => {
-            historyBody.innerHTML += `<tr>
+            const pnl = parseFloat(t.pnl) || 0;
+            const row = document.createElement('tr');
+            row.innerHTML = `
                 <td>${new Date(t.timestamp).toLocaleString()}</td>
                 <td>${t.strategy || 'N/A'}</td>
                 <td>${t.asset}</td>
                 <td>${t.amount}</td>
                 <td>${t.direction}</td>
-                <td>${t.pnl}</td>
+                <td class="pnl-cell">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</td>
                 <td>${t.balance_after}</td>
-            </tr>`;
+            `;
+            const pnlCell = row.querySelector('.pnl-cell');
+            pnlCell.style.color = pnl >= 0 ? '#22c55e' : '#ef4444';
+            pnlCell.style.fontWeight = 'bold';
+            historyBody.appendChild(row);
         });
         
         // Update progress tubes and daily P&L display
