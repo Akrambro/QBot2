@@ -2,6 +2,7 @@ from typing import List
 from pyquotex.stable_api import Quotex
 import asyncio
 
+
 async def get_payout_filtered_assets(client: Quotex, assets: List[str], payout_threshold: float) -> List[str]:
     try:
         print(f"🔍 Filtering {len(assets)} assets with {payout_threshold}% threshold")

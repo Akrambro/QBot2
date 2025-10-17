@@ -4,13 +4,15 @@ import signal
 import shutil
 import asyncio
 import subprocess
+import secrets
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 from datetime import datetime
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, validator
 from dotenv import load_dotenv
 
@@ -36,6 +38,37 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
+# Simple token-based authentication for localhost security
+# Generate a random token on server startup
+API_TOKEN = os.getenv("API_TOKEN", secrets.token_urlsafe(32))
+print(f"🔐 API Token: {API_TOKEN}")
+print(f"ℹ️  Add this to your .env file: API_TOKEN={API_TOKEN}")
+
+security = HTTPBearer(auto_error=False)
+
+async def verify_token(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    """
+    Verify API token for protected endpoints
+    
+    This provides basic security even for localhost deployments.
+    The token is generated on startup and printed to console.
+    """
+    # For now, make authentication optional to maintain backward compatibility
+    # In production, change this to raise HTTPException if token is invalid
+    if credentials is None:
+        # No token provided - allow for backward compatibility
+        # TODO: Make this mandatory in future versions
+        return True
+    
+    if credentials.credentials != API_TOKEN:
+        raise HTTPException(
+            status_code=401, 
+            detail="Invalid authentication token"
+        )
+    
+    return True
+
+
 ROOT = Path(__file__).parent
 VENV_PY = ROOT / ".venv" / "Scripts" / "python.exe"
 STRATEGY = ROOT / "trading_loop.py"
@@ -57,6 +90,10 @@ class StartSettings(BaseModel):
     # Strategy configurations
     breakout_strategy: StrategyConfig = Field(default_factory=lambda: StrategyConfig())
     engulfing_strategy: StrategyConfig = Field(default_factory=lambda: StrategyConfig())
+    bollinger_strategy: StrategyConfig = Field(default_factory=lambda: StrategyConfig(enabled=False))
+    # Bollinger-specific parameters
+    bollinger_period: int = Field(14, ge=5, le=50)
+    bollinger_deviation: float = Field(1.0, ge=0.5, le=3.0)
     # Daily limit fields
     daily_profit_limit: float = Field(0)
     daily_profit_is_percent: bool = Field(True)
@@ -73,12 +110,22 @@ class StartSettings(BaseModel):
 
 app = FastAPI()
 
+# CORS Configuration - Restrict to localhost for security
+# Only allow requests from the same machine where the bot is running
+ALLOWED_ORIGINS = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost",
+    "http://127.0.0.1",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,  # Restricted to localhost only
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],  # Only allow necessary methods
+    allow_headers=["Content-Type", "Authorization"],  # Specific headers only
+    max_age=3600,  # Cache preflight requests for 1 hour
 )
 
 
@@ -211,6 +258,7 @@ async def get_trade_logs():
 
         today_str = datetime.utcnow().date().isoformat()
         trade_states = {}  # Track latest state of each trade
+        current_time = datetime.utcnow()
 
         # Process all lines to get latest state of each trade
         for line in lines:
@@ -230,10 +278,29 @@ async def get_trade_logs():
         
         # Separate active and completed trades
         for trade_id, log in trade_states.items():
-            if log.get("status") == "active":
+            status = log.get("status")
+            
+            # Check if "active" trade has actually expired based on time
+            if status == "active":
+                try:
+                    trade_time = datetime.fromisoformat(log.get("timestamp", "").replace("Z", "+00:00"))
+                    duration = log.get("duration", 60)
+                    expiry_time = trade_time.timestamp() + duration
+                    current_timestamp = current_time.timestamp()
+                    
+                    # If trade has expired (current time > expiry + 10 sec buffer), treat as closed
+                    if current_timestamp > expiry_time + 10:
+                        # This trade should have been closed by now - skip it from active
+                        # It will be updated to win/loss when monitor_trade completes
+                        continue
+                except (ValueError, TypeError):
+                    pass
+                
+                # Still active - calculate time remaining
                 log["live_pnl"] = "N/A"
                 active_trades.append(log)
-            elif log.get("status") in ["win", "loss"]:
+                
+            elif status in ["win", "loss"]:
                 log["balance_after"] = "N/A"
                 trade_history.append(log)
                 
@@ -272,12 +339,15 @@ def build_env(settings: StartSettings) -> Dict[str, str]:
         "QX_ENGULFING_ENABLED": "1" if settings.engulfing_strategy.enabled else "0",
         "QX_ENGULFING_ANALYSIS_TF": str(settings.engulfing_strategy.analysis_timeframe),
         "QX_ENGULFING_TRADE_TF": str(settings.engulfing_strategy.trade_timeframe),
+        "QX_BOLLINGER_ENABLED": "1" if settings.bollinger_strategy.enabled else "0",
+        "QX_BOLLINGER_PERIOD": str(settings.bollinger_period),
+        "QX_BOLLINGER_DEVIATION": str(settings.bollinger_deviation),
     })
     return env
 
 
 @app.post("/api/start")
-async def start_bot(settings: StartSettings):
+async def start_bot(settings: StartSettings, authenticated: bool = Depends(verify_token)):
     global process, current_settings
     if not (ROOT / ".env").exists():
         raise HTTPException(400, detail="Missing .env with QX_EMAIL and QX_PASSWORD")
@@ -305,7 +375,7 @@ async def start_bot(settings: StartSettings):
 
 
 @app.post("/api/stop")
-async def stop_bot():
+async def stop_bot(authenticated: bool = Depends(verify_token)):
     global process
     STOP_FILE.write_text("stop")
     await asyncio.sleep(1.0)

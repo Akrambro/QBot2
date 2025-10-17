@@ -144,6 +144,14 @@ input[type="range"] { width: 100%; }
     font-weight: normal;
     font-size: 12px;
 }
+.trade-log tr.expiring-soon {
+    background-color: rgba(239, 68, 68, 0.1);
+    animation: pulse-warning 2s infinite;
+}
+@keyframes pulse-warning {
+    0%, 100% { background-color: rgba(239, 68, 68, 0.1); }
+    50% { background-color: rgba(239, 68, 68, 0.2); }
+}
 .toggle {
     width: 100%;
     border: none;
@@ -252,4 +260,17 @@ input[type="range"] { width: 100%; }
 
 .field-row .field {
     margin-bottom: 0;
+}
+
+/* Daily P&L color states - moved from inline styles */
+.daily-pnl-neutral {
+    color: var(--muted);
+}
+
+.daily-pnl-positive {
+    color: var(--accent);
+}
+
+.daily-pnl-negative {
+    color: var(--danger);
 }

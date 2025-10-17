@@ -34,6 +34,15 @@ function gatherSettings() {
         trade_timeframe: parseInt(document.getElementById('engulfingTradeTf').value || '60', 10)
     };
     
+    const bollinger_strategy = {
+        enabled: document.getElementById('bollingerEnabled').checked,
+        analysis_timeframe: parseInt(document.getElementById('bollingerAnalysisTf').value || '60', 10),
+        trade_timeframe: parseInt(document.getElementById('bollingerTradeTf').value || '60', 10)
+    };
+    
+    const bollinger_period = parseInt(document.getElementById('bollingerPeriod').value || '14', 10);
+    const bollinger_deviation = parseFloat(document.getElementById('bollingerDeviation').value || '1.0');
+    
     return { 
         payout, 
         trade_percent: tradePercent, 
@@ -46,7 +55,10 @@ function gatherSettings() {
         daily_loss_limit, 
         daily_loss_is_percent,
         breakout_strategy,
-        engulfing_strategy
+        engulfing_strategy,
+        bollinger_strategy,
+        bollinger_period,
+        bollinger_deviation
     };
 }
 
@@ -85,18 +97,32 @@ async function refreshTradeLogs() {
         historyBody.innerHTML = '';
 
         logs.active_trades.forEach(t => {
-            const expiresIn = Math.round((new Date(t.timestamp).getTime() / 1000 + t.duration) - (Date.now() / 1000));
-            activeBody.innerHTML += `<tr>
-                <td>${t.id}</td>
-                <td>${t.strategy || 'N/A'}</td>
-                <td>${t.asset}</td>
-                <td>${t.amount}</td>
-                <td>${t.direction}</td>
-                <td>${new Date(t.timestamp).toLocaleTimeString()}</td>
-                <td>${expiresIn > 0 ? expiresIn + 's' : 'Expired'}</td>
-                <td>${t.live_pnl}</td>
-            </tr>`;
+            const tradeTime = new Date(t.timestamp).getTime() / 1000;
+            const currentTime = Date.now() / 1000;
+            const expiresIn = Math.round(tradeTime + t.duration - currentTime);
+            
+            // Only show if not expired (with 5 second buffer)
+            if (expiresIn > -5) {
+                const expiryDisplay = expiresIn > 0 ? `${expiresIn}s` : 'Closing...';
+                const rowClass = expiresIn <= 5 ? 'expiring-soon' : '';
+                
+                activeBody.innerHTML += `<tr class="${rowClass}">
+                    <td>${t.id}</td>
+                    <td>${t.strategy || 'N/A'}</td>
+                    <td>${t.asset}</td>
+                    <td>${t.amount}</td>
+                    <td>${t.direction}</td>
+                    <td>${new Date(t.timestamp).toLocaleTimeString()}</td>
+                    <td>${expiryDisplay}</td>
+                    <td>${t.live_pnl}</td>
+                </tr>`;
+            }
         });
+        
+        // Show message if no active trades
+        if (logs.active_trades.length === 0 || activeBody.innerHTML === '') {
+            activeBody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #888;">No active trades</td></tr>';
+        }
 
         logs.trade_history.forEach(t => {
             const pnl = parseFloat(t.pnl) || 0;
@@ -124,7 +150,16 @@ async function refreshTradeLogs() {
         const dailyPnlElement = document.getElementById('dailyPnl');
         if (dailyPnlElement) {
             dailyPnlElement.textContent = `$${dailyPnl.toFixed(2)}`;
-            dailyPnlElement.style.color = dailyPnl >= 0 ? 'var(--accent)' : 'var(--danger)';
+            // Remove all color classes first
+            dailyPnlElement.classList.remove('daily-pnl-neutral', 'daily-pnl-positive', 'daily-pnl-negative');
+            // Add appropriate class based on P&L
+            if (dailyPnl > 0) {
+                dailyPnlElement.classList.add('daily-pnl-positive');
+            } else if (dailyPnl < 0) {
+                dailyPnlElement.classList.add('daily-pnl-negative');
+            } else {
+                dailyPnlElement.classList.add('daily-pnl-neutral');
+            }
         }
     } catch (e) {
         console.error("Failed to refresh trade logs:", e);
@@ -273,5 +308,5 @@ document.getElementById('lossIsPercent')?.addEventListener('change', () => {
 });
 
 init();
-setInterval(refreshStatus, 3000);  // More frequent for balance updates
-setInterval(refreshTradeLogs, 3000);  // More frequent for trade updates
+setInterval(refreshStatus, 2000);  // Update every 2 seconds for balance
+setInterval(refreshTradeLogs, 2000);  // Update every 2 seconds for active/closed trades

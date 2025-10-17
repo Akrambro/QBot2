@@ -3,6 +3,7 @@ import time
 import asyncio
 import json
 import signal
+import logging
 from datetime import datetime
 from typing import List, Dict, Optional
 
@@ -13,8 +14,20 @@ from assets import live_assets, otc_assets
 from utils import get_payout_filtered_assets
 from strategies.breakout_strategy import check_extremes_condition, compute_breakout_signal
 from strategies.engulfing_strategy import compute_engulfing_signal
+from strategies.bollinger_break import compute_bollinger_break_signal
 
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('bot.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Configuration
 PAYOUT_THRESHOLD = float(os.getenv("QX_PAYOUT", "84"))
@@ -24,6 +37,9 @@ MAX_CONCURRENT = int(os.getenv("QX_MAX_CONCURRENT", "1"))
 TIMEFRAME = int(os.getenv("QX_TIMEFRAME", "60"))
 BREAKOUT_ENABLED = os.getenv("QX_BREAKOUT_ENABLED", "1") == "1"
 ENGULFING_ENABLED = os.getenv("QX_ENGULFING_ENABLED", "1") == "1"
+BOLLINGER_ENABLED = os.getenv("QX_BOLLINGER_ENABLED", "0") == "1"
+BOLLINGER_PERIOD = int(os.getenv("QX_BOLLINGER_PERIOD", "14"))
+BOLLINGER_DEVIATION = float(os.getenv("QX_BOLLINGER_DEVIATION", "1.0"))
 
 # Global state
 active_trades = {}
@@ -44,47 +60,116 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 async def fetch_candles(client: Quotex, asset: str) -> Optional[List[Dict]]:
+    """
+    Fetch candles using PyQuotex get_candles() API.
+    Corrected to use proper API signature that works in practice.
+    """
     try:
         api_asset = asset.replace('/', '').replace(' (OTC)', '_otc')
         
-        # Use proper pyquotex parameters: asset, end_from_time, count, period
+        # Step 1: Verify asset is available and market is open
+        asset_name, asset_data = await client.get_available_asset(api_asset, force_open=True)
+        if not asset_data or not asset_data[2]:  # asset_data[2] = is_open boolean
+            logger.warning(f"{asset}: Asset not available or market closed")
+            return None
+        
+        # Step 2: Use get_candles() with correct signature
+        # API signature: get_candles(asset, end_from_time, offset, period)
+        # offset = seconds of historical data
+        # IMPORTANT: Need at least 30 candles for strategies (30 * TIMEFRAME)
         end_time = int(time.time())
-        count = 10  # Get more candles for better analysis
-        period = TIMEFRAME  # Period in seconds
+        offset = TIMEFRAME * 50  # Request 50 candles worth (will get 20-30 typically)
+        period = TIMEFRAME  # Candle period in seconds (60, 120, etc.)
         
-        candles = await client.get_candles(api_asset, end_time, count, period)
+        candles = await client.get_candles(asset_name, end_time, offset, period)
         
-        # Validate candle data - check if values make sense for the asset
-        if candles and len(candles) >= 6:
-            last_candle = candles[-1]
-            prev_candle = candles[-2]
-            
-            # Basic validation - check if candle values are reasonable
-            curr_price = float(last_candle['close'])
-            prev_price = float(prev_candle['close'])
-            
-            # Asset-specific price validation
-            if 'JPY' in asset and (curr_price < 50 or curr_price > 200):
-                print(f"⚠️ {asset}: Invalid JPY price {curr_price} - data corruption detected")
-                return None
-            elif 'NGN' in asset and (curr_price < 1000 or curr_price > 2000):
-                print(f"⚠️ {asset}: Invalid NGN price {curr_price} - data corruption detected")
-                return None
-            elif 'BDT' in asset and (curr_price < 100 or curr_price > 150):
-                print(f"⚠️ {asset}: Invalid BDT price {curr_price} - data corruption detected")
-                return None
-            elif 'TRY' in asset and (curr_price < 30 or curr_price > 50):
-                # This is expected range for USD/TRY
-                pass
-            elif curr_price < 0.1 or curr_price > 10000:
-                print(f"⚠️ {asset}: Invalid price range {curr_price} - data corruption detected")
-                return None
-            
-
+        # Validate we got candles
+        if not candles or len(candles) == 0:
+            logger.warning(f"{asset}: No candles returned")
+            return None
         
-        return candles if candles and len(candles) >= 6 else None
+        # Keep the most recent 30 candles (strategies need 20+ for trend analysis)
+        if len(candles) > 30:
+            candles = candles[-30:]
+        
+        # Check if we have enough candles for strategies
+        if len(candles) < 20:
+            logger.warning(f"{asset}: Only got {len(candles)} candles - strategies need 20+")
+            # Don't return None - try to work with what we have
+            # Some strategies might still work with fewer candles
+        
+        logger.info(f"[OK] {asset}: Fetched {len(candles)} candles")
+        
+        # Normalize candle data - pyquotex returns 'high'/'low' but strategies expect 'max'/'min'
+        normalized_candles = []
+        for i, candle in enumerate(candles):
+            # Check which key format is being used
+            has_max_min = 'max' in candle and 'min' in candle
+            has_high_low = 'high' in candle and 'low' in candle
+            has_open_close = 'open' in candle and 'close' in candle
+            
+            # Need at least OHLC in some format
+            if not has_open_close:
+                logger.warning(f"{asset}: Missing open/close in candle {i+1}/{len(candles)}")
+                continue  # Skip bad candle, don't fail entire fetch
+                
+            if not has_max_min and not has_high_low:
+                logger.warning(f"{asset}: Missing high/low in candle {i+1}/{len(candles)}")
+                continue  # Skip bad candle
+            
+            # Create normalized candle with both formats for compatibility
+            normalized = dict(candle)
+            if has_high_low and not has_max_min:
+                normalized['max'] = candle['high']
+                normalized['min'] = candle['low']
+            elif has_max_min and not has_high_low:
+                normalized['high'] = candle['max']
+                normalized['low'] = candle['min']
+            
+            # Validate price data
+            try:
+                o = float(normalized.get('open', 0))
+                c = float(normalized.get('close', 0))
+                h = float(normalized.get('max') or normalized.get('high', 0))
+                l = float(normalized.get('min') or normalized.get('low', 0))
+                
+                # Only reject candles with obviously corrupt data
+                if any(val <= 0 for val in [o, c, h, l]):
+                    logger.debug(f"{asset}: Skipping candle {i+1}/{len(candles)} - zero/negative price")
+                    continue
+                
+                # Allow minor OHLC violations (could be data feed quirks)
+                # Only reject if high < low (impossible scenario)
+                if h < l:
+                    logger.debug(f"{asset}: Skipping candle {i+1}/{len(candles)} - high < low")
+                    continue
+                
+                # Auto-correct minor OHLC relationship issues
+                if h < max(o, c):
+                    h = max(o, c)
+                    normalized['max'] = h
+                    normalized['high'] = h
+                if l > min(o, c):
+                    l = min(o, c)
+                    normalized['min'] = l
+                    normalized['low'] = l
+                        
+            except (ValueError, TypeError) as e:
+                logger.debug(f"{asset}: Skipping candle {i+1}/{len(candles)} - invalid data type")
+                continue
+            
+            normalized_candles.append(normalized)
+        
+        # Make sure we have enough valid candles
+        if len(normalized_candles) < 6:
+            logger.warning(f"{asset}: Insufficient valid candles - got {len(normalized_candles)}, need 6+")
+            return None
+        
+        logger.info(f"[OK] {asset}: Validated {len(normalized_candles)} candles (passed OHLC checks)")
+        return normalized_candles
+        
     except Exception as e:
-        print(f"⚠️ {asset}: Candle fetch error - {e}")
+        logger.error(f"{asset}: Candle fetch error - {type(e).__name__}: {e}")
         return None
 
 async def prefilter_breakout_assets(client: Quotex, assets: List[str]) -> None:
@@ -139,46 +224,61 @@ async def fetch_and_cache_candles(client: Quotex, asset: str) -> None:
         engulfing_candles_cache[asset] = candles
 
 async def analyze_asset(client: Quotex, asset: str, trade_amount: float) -> Optional[Dict]:
-    """Analyze single asset for all strategies and return signal if found"""
+    """
+    Analyze single asset for all strategies and return signal if found.
+    ALWAYS fetches fresh candles to ensure we analyze the most recent CLOSED candle.
+    """
     if asset in active_trades or asset in failed_assets:
         return None
     
-
+    # Fetch fresh candles immediately - includes the candle that JUST CLOSED
+    candles = await fetch_candles(client, asset)
+    if not candles or len(candles) < 6:
+        return None
     
-    # Check breakout strategy (use shortlisted assets only)
-    if BREAKOUT_ENABLED and asset in shortlisted_assets:
-
-        # Use fresh candles for final analysis to get latest data
-        candles = await fetch_candles(client, asset)
-        if candles and len(candles) >= 6:
-            extremes = shortlisted_assets[asset]
+    # Check breakout strategy
+    if BREAKOUT_ENABLED:
+        # Compute extremes on-the-fly (fast enough)
+        from strategies.breakout_strategy import check_extremes_condition
+        is_low_extreme, is_high_extreme = check_extremes_condition(candles)
+        
+        if is_low_extreme or is_high_extreme:
+            extremes = (is_low_extreme, is_high_extreme)
             signal, valid, msg = compute_breakout_signal(candles, extremes)
-
             if valid:
-                print(f"✅ {asset} BREAKOUT SIGNAL GENERATED: {signal.upper()}")
+                print(f"✅ {asset} BREAKOUT SIGNAL: {signal.upper()} - {msg}")
                 return {
                     "asset": asset,
                     "signal": signal,
                     "strategy": "breakout"
                 }
-
-
-
     
-    # Check engulfing strategy (use cached candles)
-    if ENGULFING_ENABLED and asset in engulfing_candles_cache:
-
-        candles = engulfing_candles_cache[asset]
+    # Check engulfing strategy
+    if ENGULFING_ENABLED:
         signal, valid, msg = compute_engulfing_signal(candles)
-
         if valid:
-            print(f"✅ {asset} ENGULFING SIGNAL GENERATED: {signal.upper()}")
+            print(f"✅ {asset} ENGULFING SIGNAL: {signal.upper()} - {msg}")
             return {
                 "asset": asset,
                 "signal": signal,
                 "strategy": "engulfing"
             }
-
+    
+    # Check Bollinger Break strategy
+    if BOLLINGER_ENABLED and len(candles) >= BOLLINGER_PERIOD + 1:
+        signal, valid, msg = compute_bollinger_break_signal(
+            candles, 
+            period=BOLLINGER_PERIOD, 
+            deviation=BOLLINGER_DEVIATION
+        )
+        if valid:
+            print(f"✅ {asset} BOLLINGER BREAK SIGNAL: {signal.upper()} - {msg}")
+            return {
+                "asset": asset,
+                "signal": signal,
+                "strategy": "bollinger_break"
+            }
+    
     return None
 
 async def analyze_and_trade(client: Quotex, asset: str, trade_amount: float) -> bool:
@@ -187,12 +287,12 @@ async def analyze_and_trade(client: Quotex, asset: str, trade_amount: float) -> 
         signal_data = await analyze_asset(client, asset, trade_amount)
         
         if signal_data:
-            print(f"🎯 {signal_data['strategy'].upper()} {signal_data['signal'].upper()}: {asset}")
+            logger.info(f"[SIGNAL] {signal_data['strategy'].upper()} {signal_data['signal'].upper()}: {asset}")
             return await place_trade(client, signal_data, trade_amount)
         
         return False
     except Exception as e:
-        print(f"⚠️ {asset}: Analysis error - {e}")
+        logger.error(f"{asset}: Analysis error - {type(e).__name__}: {e}", exc_info=True)
         return False
 
 async def place_trade(client: Quotex, signal_data: Dict, trade_amount: float) -> bool:
@@ -209,11 +309,23 @@ async def place_trade(client: Quotex, signal_data: Dict, trade_amount: float) ->
             
         try:
             api_asset = asset.replace('/', '').replace(' (OTC)', '_otc')
+            
+            # Verify asset is available and open before placing trade
+            try:
+                asset_name, asset_data = await client.get_available_asset(api_asset, force_open=True)
+                if not asset_data or not asset_data[2]:  # asset_data[2] = is_open
+                    logger.warning(f"{asset}: Market closed or asset unavailable - skipping trade")
+                    print(f"⚠️ {asset}: Market closed - cannot place trade")
+                    return False
+            except Exception as e:
+                logger.warning(f"{asset}: Asset verification failed - {e}")
+                # Continue anyway - might be API issue
+            
             success, payload = await asyncio.wait_for(
                 client.buy(
                     amount=trade_amount,
                     asset=api_asset,
-                    direction=signal,
+                    direction=signal.lower(),  # PyQuotex requires lowercase 'call'/'put'
                     duration=TIMEFRAME
                 ),
                 timeout=5.0
@@ -223,7 +335,16 @@ async def place_trade(client: Quotex, signal_data: Dict, trade_amount: float) ->
                 trade_id = payload["id"]
                 active_trades[asset] = trade_id
                 
-                print(f"✅ {strategy.upper()} {signal.upper()} on {asset} - ID: {trade_id}")
+                # Enhanced logging with strategy-specific details
+                if strategy == "bollinger_break":
+                    print(f"🎯 BOLLINGER BREAK TRADE PLACED!")
+                    print(f"   Asset: {asset}")
+                    print(f"   Direction: {signal.upper()}")
+                    print(f"   Amount: ${trade_amount}")
+                    print(f"   Trade ID: {trade_id}")
+                    print(f"   BB Period: {BOLLINGER_PERIOD} | Deviation: {BOLLINGER_DEVIATION}")
+                else:
+                    print(f"✅ {strategy.upper()} {signal.upper()} on {asset} - ID: {trade_id}")
                 
                 # Log trade
                 log_entry = {
@@ -246,7 +367,18 @@ async def place_trade(client: Quotex, signal_data: Dict, trade_amount: float) ->
                 asyncio.create_task(monitor_trade(client, trade_id, log_entry, asset))
                 return True
             else:
+                # Enhanced error logging to diagnose trade failures
+                logger.error(f"{asset}: Trade placement FAILED")
+                logger.error(f"  - Success flag: {success}")
+                logger.error(f"  - Payload type: {type(payload)}")
+                logger.error(f"  - Payload content: {payload}")
+                logger.error(f"  - Asset (API format): {api_asset}")
+                logger.error(f"  - Direction: {signal}")
+                logger.error(f"  - Amount: {trade_amount}")
+                logger.error(f"  - Duration: {TIMEFRAME}")
+                
                 print(f"❌ {asset}: Trade failed - {payload}")
+                
                 if isinstance(payload, str) and "market" in payload.lower():
                     failed_assets.add(asset)
                 
@@ -269,9 +401,9 @@ async def monitor_trade(client: Quotex, trade_id: str, log_entry: Dict, asset: s
         # Check result with timeout protection
         try:
             won = await asyncio.wait_for(client.check_win(trade_id), timeout=10.0)
-            profit = await asyncio.wait_for(client.get_profit(), timeout=5.0)
+            profit = client.get_profit()  # Returns float directly, not async
         except asyncio.TimeoutError:
-            print(f"⏰ {asset}: Monitor timeout - forcing cleanup")
+            logger.warning(f"{asset}: Monitor timeout for trade {trade_id} - forcing cleanup")
             won = False
             profit = 0
         
@@ -288,7 +420,7 @@ async def monitor_trade(client: Quotex, trade_id: str, log_entry: Dict, asset: s
         print(f"🔔 Trade {trade_id} {result}: ${profit:.2f}")
         
     except Exception as e:
-        print(f"❌ Monitor error for {trade_id}: {e}")
+        logger.error(f"Monitor error for trade {trade_id}: {type(e).__name__}: {e}", exc_info=True)
     finally:
         # Always cleanup regardless of success/failure
         if asset in active_trades:
@@ -388,6 +520,8 @@ async def main():
     
     print(f"🚀 BOT STARTED | Mode: {ACCOUNT_MODE} | Balance: ${balance} | Trade: ${trade_amount}")
     print(f"📊 Timeframe: {TIMEFRAME}s | Breakout: {BREAKOUT_ENABLED} | Engulfing: {ENGULFING_ENABLED}")
+    if BOLLINGER_ENABLED:
+        print(f"📊 Bollinger Break: {BOLLINGER_ENABLED} | Period: {BOLLINGER_PERIOD} | Deviation: {BOLLINGER_DEVIATION}")
     
     # Get tradable assets
     all_assets = live_assets + otc_assets
@@ -473,69 +607,52 @@ async def main():
                     print(f"❌ Force refresh failed: {e}")
             await wait_for_candle_close()  # Wait for next cycle
         else:
-            # Phase 0: Prefetch candles for engulfing at candle start
-            await prefetch_engulfing_candles(client, available_assets)
-            
-            # Phase 1: Wait for half-time and prefilter breakout assets
-            if BREAKOUT_ENABLED:
-                if await wait_for_half_time():
-                    await prefilter_breakout_assets(client, available_assets)
-            
-            # Phase 2: Wait for candle close and analyze
-            await wait_for_candle_close()
+            # ⚡ TIMING FIX: Analyze IMMEDIATELY after candle close, place trade on NEW candle
+            # Current candle just closed - this is the LAST CONFIRMED candle we analyze
+            # Next candle is OPENING NOW - this is where we place our trade
             
             if shutdown_requested or os.path.exists("STOP"):
                 break
             
-            # Phase 3: Parallel analysis and immediate trading
+            # Phase 1: Parallel analysis and IMMEDIATE trading (on fresh candle)
             start_time = time.time()
             
-            # Filter assets based on prefiltering results
-            analysis_assets = []
+            # Analyze ALL available assets (no pre-filtering needed - fast enough now)
+            print(f"🔍 Analyzing {len(available_assets)} available assets")
             
-            # Only add breakout shortlisted assets
-            if BREAKOUT_ENABLED and shortlisted_assets:
-                analysis_assets.extend(shortlisted_assets.keys())
-                print(f"🎯 Breakout candidates: {list(shortlisted_assets.keys())}")
-            
-            # Only add engulfing cached assets that aren't already in breakout list
-            if ENGULFING_ENABLED and engulfing_candles_cache:
-                engulfing_only = [asset for asset in engulfing_candles_cache.keys() 
-                                if asset not in analysis_assets]
-                analysis_assets.extend(engulfing_only)
-                print(f"🎯 Engulfing candidates: {engulfing_only}")
-            
-            # Filter out active/failed assets
-            analysis_assets = [asset for asset in analysis_assets 
-                             if asset not in active_trades and asset not in failed_assets]
-            
-            print(f"🎯 Final analysis list: {analysis_assets}")
-            
-            if analysis_assets:
-                print(f"🔍 Analyzing {len(analysis_assets)} prefiltered assets: {analysis_assets}")
+            if available_assets:
+                # With ~15 tradable assets max, we can analyze all without batching
+                # Each asset needs ~0.3-0.5s (fetch + analyze)
+                # Total: 15 assets × 0.5s = ~7.5 seconds typical
+                
+                print(f"🔍 Analyzing {len(available_assets)} assets in parallel...")
                 
                 # Create tasks for parallel analysis and trading
-                tasks = [analyze_and_trade(client, asset, trade_amount) for asset in analysis_assets]
+                tasks = [analyze_and_trade(client, asset, trade_amount) for asset in available_assets]
                 
-                # Execute all tasks concurrently with timeout
+                # Generous timeout for up to 20 assets: 20 × 0.5s + 10s buffer = 20s
+                timeout_seconds = max(20.0, len(available_assets) * 1.0)
+                
                 try:
                     results = await asyncio.wait_for(
                         asyncio.gather(*tasks, return_exceptions=True),
-                        timeout=5.0  # Reduced timeout since assets are prefiltered
+                        timeout=timeout_seconds
                     )
                     
                     trades_placed = sum(1 for result in results if result is True)
                     analysis_time = time.time() - start_time
                     
-                    print(f"✅ Analysis completed in {analysis_time:.1f}s | Trades placed: {trades_placed}")
+                    print(f"✅ Analysis completed in {analysis_time:.1f}s | Trades placed: {trades_placed}/{len(available_assets)}")
                     
                 except asyncio.TimeoutError:
                     analysis_time = time.time() - start_time
                     print(f"⏰ Analysis timeout after {analysis_time:.1f}s")
+                    print(f"   Tried {len(available_assets)} assets - some may be slow to respond")
             else:
-                print("❌ No prefiltered assets to analyze")
-                print(f"Debug: Breakout shortlisted: {len(shortlisted_assets)}, Engulfing cached: {len(engulfing_candles_cache)}")
-                await wait_for_candle_close()  # Wait for next cycle
+                print("❌ No available assets to analyze")
+            
+            # Wait for next candle close to repeat
+            await wait_for_candle_close()
         
         # Continue to next cycle
         await asyncio.sleep(1)  # Small delay to prevent tight loops

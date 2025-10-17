@@ -21,17 +21,17 @@
             <div class="card span-2">
                 <h2>Trade Settings</h2>
                 <div class="field">
-                    <label>Trade % of Balance: <span id="percentLabel">2%</span></label>
-                    <input type="range" id="tradePercent" min="0.5" max="15" step="0.5" value="2" />
+                    <label for="tradePercent">Trade % of Balance: <span id="percentLabel">2%</span></label>
+                    <input type="range" id="tradePercent" name="tradePercent" min="0.5" max="15" step="0.5" value="2" aria-label="Trade percentage of balance" aria-describedby="percentLabel" />
                 </div>
                 <div class="field">
-                    <label>Payout threshold (%)</label>
-                    <input type="number" id="payout" min="50" max="100" step="1" value="84" />
+                    <label for="payout">Payout threshold (%)</label>
+                    <input type="number" id="payout" name="payout" min="50" max="100" step="1" value="84" aria-label="Minimum payout threshold percentage" />
                 </div>
                 <div class="field">
-                    <label>Max concurrent trades</label>
-                    <input type="range" id="maxConcurrent" min="1" max="10" step="1" value="1" />
-                    <span id="maxConcurrentLabel">1</span>
+                    <label for="maxConcurrent">Max concurrent trades</label>
+                    <input type="range" id="maxConcurrent" name="maxConcurrent" min="1" max="10" step="1" value="1" aria-label="Maximum concurrent trades" aria-describedby="maxConcurrentLabel" />
+                    <span id="maxConcurrentLabel" aria-live="polite">1</span>
                 </div>
             </div>
 
@@ -47,12 +47,12 @@
                         <div class="strategy-settings">
                             <div class="field-row">
                                 <div class="field">
-                                    <label>Analysis TF (s)</label>
-                                    <input type="number" id="breakoutAnalysisTf" min="15" max="3600" step="15" value="60" />
+                                    <label for="breakoutAnalysisTf">Analysis TF (s)</label>
+                                    <input type="number" id="breakoutAnalysisTf" name="breakoutAnalysisTf" min="15" max="3600" step="15" value="60" aria-label="Breakout strategy analysis timeframe in seconds" />
                                 </div>
                                 <div class="field">
-                                    <label>Trade Expiry (s)</label>
-                                    <input type="number" id="breakoutTradeTf" min="15" max="3600" step="15" value="60" />
+                                    <label for="breakoutTradeTf">Trade Expiry (s)</label>
+                                    <input type="number" id="breakoutTradeTf" name="breakoutTradeTf" min="15" max="3600" step="15" value="60" aria-label="Breakout strategy trade expiry in seconds" />
                                 </div>
                             </div>
                         </div>
@@ -65,12 +65,40 @@
                         <div class="strategy-settings">
                             <div class="field-row">
                                 <div class="field">
-                                    <label>Analysis TF (s)</label>
-                                    <input type="number" id="engulfingAnalysisTf" min="15" max="3600" step="15" value="60" />
+                                    <label for="engulfingAnalysisTf">Analysis TF (s)</label>
+                                    <input type="number" id="engulfingAnalysisTf" name="engulfingAnalysisTf" min="15" max="3600" step="15" value="60" aria-label="Engulfing strategy analysis timeframe in seconds" />
                                 </div>
                                 <div class="field">
-                                    <label>Trade Expiry (s)</label>
-                                    <input type="number" id="engulfingTradeTf" min="15" max="3600" step="15" value="60" />
+                                    <label for="engulfingTradeTf">Trade Expiry (s)</label>
+                                    <input type="number" id="engulfingTradeTf" name="engulfingTradeTf" min="15" max="3600" step="15" value="60" aria-label="Engulfing strategy trade expiry in seconds" />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="strategy-item">
+                        <div class="strategy-header">
+                            <input type="checkbox" id="bollingerEnabled" />
+                            <label for="bollingerEnabled"><strong>Bollinger Break Strategy</strong></label>
+                        </div>
+                        <div class="strategy-settings">
+                            <div class="field-row">
+                                <div class="field">
+                                    <label for="bollingerAnalysisTf">Analysis TF (s)</label>
+                                    <input type="number" id="bollingerAnalysisTf" name="bollingerAnalysisTf" min="15" max="3600" step="15" value="60" aria-label="Bollinger strategy analysis timeframe in seconds" />
+                                </div>
+                                <div class="field">
+                                    <label for="bollingerTradeTf">Trade Expiry (s)</label>
+                                    <input type="number" id="bollingerTradeTf" name="bollingerTradeTf" min="15" max="3600" step="15" value="60" aria-label="Bollinger strategy trade expiry in seconds" />
+                                </div>
+                            </div>
+                            <div class="field-row">
+                                <div class="field">
+                                    <label for="bollingerPeriod">BB Period</label>
+                                    <input type="number" id="bollingerPeriod" name="bollingerPeriod" min="5" max="50" step="1" value="14" aria-label="Bollinger Band period" />
+                                </div>
+                                <div class="field">
+                                    <label for="bollingerDeviation">BB Deviation</label>
+                                    <input type="number" id="bollingerDeviation" name="bollingerDeviation" min="0.5" max="3.0" step="0.1" value="1.0" aria-label="Bollinger Band standard deviation" />
                                 </div>
                             </div>
                         </div>
@@ -87,7 +115,7 @@
                     <div class="stat-title">Real</div>
                     <div class="stat-value" id="realBalance">$0.00</div>
                     <div class="stat-title">Daily P&L</div>
-                    <div class="stat-value" id="dailyPnl" style="color: var(--muted);">$0.00</div>
+                    <div class="stat-value daily-pnl-neutral" id="dailyPnl">$0.00</div>
                 </div>
             </div>
 
@@ -95,10 +123,10 @@
             <div class="card">
                 <h2>Target Profit & Loss</h2>
                 <div class="field">
-                    <label>Daily Profit Target</label>
+                    <label for="profitLimit">Daily Profit Target</label>
                     <div class="row">
-                        <input type="number" id="profitLimit" min="0" step="0.1" value="0" />
-                        <select id="profitIsPercent">
+                        <input type="number" id="profitLimit" name="profitLimit" min="0" step="0.1" value="0" aria-label="Daily profit target value" />
+                        <select id="profitIsPercent" name="profitIsPercent" aria-label="Profit target unit">
                             <option value="1" selected>%</option>
                             <option value="0">Amount</option>
                         </select>
@@ -109,10 +137,10 @@
                     </div>
                 </div>
                 <div class="field">
-                    <label>Daily Stop Loss</label>
+                    <label for="lossLimit">Daily Stop Loss</label>
                     <div class="row">
-                        <input type="number" id="lossLimit" min="0" step="0.1" value="0" />
-                        <select id="lossIsPercent">
+                        <input type="number" id="lossLimit" name="lossLimit" min="0" step="0.1" value="0" aria-label="Daily stop loss value" />
+                        <select id="lossIsPercent" name="lossIsPercent" aria-label="Stop loss unit">
                             <option value="1" selected>%</option>
                             <option value="0">Amount</option>
                         </select>
