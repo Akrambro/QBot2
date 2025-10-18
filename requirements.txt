@@ -4,3 +4,8 @@ python-dotenv
 pyquotex
 fake-useragent
 requests
+pandas
+numpy
+matplotlib
+plotly
+kaleido

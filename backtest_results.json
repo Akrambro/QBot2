@@ -1,0 +1,44 @@
+{
+  "breakout": {
+    "strategy": "Breakout Strategy",
+    "total_trades": 1479,
+    "wins": 704,
+    "losses": 775,
+    "win_rate": 47.59972954699121,
+    "total_profit": -1766.0,
+    "avg_win": 8.5,
+    "avg_loss": -10.0,
+    "profit_factor": 0.7721290322580645,
+    "max_drawdown": 1789.5,
+    "max_drawdown_pct": 8134.090909090909,
+    "expected_value": -1.194050033806626
+  },
+  "engulfing": {
+    "strategy": "Engulfing Strategy",
+    "total_trades": 2442,
+    "wins": 1114,
+    "losses": 1328,
+    "win_rate": 45.61834561834562,
+    "total_profit": -3811.0,
+    "avg_win": 8.5,
+    "avg_loss": -10.0,
+    "profit_factor": 0.713027108433735,
+    "max_drawdown": 3935.5,
+    "max_drawdown_pct": 41426.31578947368,
+    "expected_value": -1.5606060606060606
+  },
+  "bollinger_14_1.0": {
+    "strategy": "Bollinger Break (P=14, D=1.0)",
+    "total_trades": 45636,
+    "wins": 21327,
+    "losses": 24309,
+    "win_rate": 46.73284249276887,
+    "total_profit": -61810.5,
+    "avg_win": 8.5,
+    "avg_loss": -10.0,
+    "profit_factor": 0.7457299765518943,
+    "max_drawdown": 61837.0,
+    "max_drawdown_pct": 224861.81818181818,
+    "expected_value": -1.3544241388377596
+  }
+}
