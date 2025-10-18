@@ -70,24 +70,32 @@ def calculate_bollinger_bands(
 
 def compute_bollinger_break_signal(
     candles: List[Dict],
-    period: int = 14,
-    deviation: float = 1.0
+    period: int = 20,
+    deviation: float = 2.0
 ) -> Tuple[str, bool, str]:
     """
-    Detect Bollinger Band breakout signals
+    Detect Bollinger Band breakout signals (OPTIMIZED)
+    
+    OPTIMIZED STRATEGY:
+    - Uses ONLY classic breakouts (higher win rate)
+    - Default period=20, deviation=2.0 for wider bands
+    - Removes aggressive mode that generates false signals
+    - Requires strong candle body (>50% of range)
     
     CALL Signal:
     - Candle opens below upper band
     - Candle closes completely above upper band
+    - Strong candle body (not doji)
     
     PUT Signal:
     - Candle opens above lower band
     - Candle closes completely below lower band
+    - Strong candle body (not doji)
     
     Args:
         candles: List of OHLC candle dictionaries (most recent last)
-        period: Bollinger Band period (default: 14)
-        deviation: Standard deviation multiplier (default: 1.0)
+        period: Bollinger Band period (default: 20 - optimized)
+        deviation: Standard deviation multiplier (default: 2.0 - optimized)
     
     Returns:
         Tuple of (signal, should_trade, reason)
@@ -122,80 +130,66 @@ def compute_bollinger_break_signal(
     if bb_upper == 0 or bb_lower == 0:
         return "HOLD", False, "Invalid Bollinger Band values"
     
-    # === CALL SIGNAL (More Aggressive Detection) ===
-    # Original: Candle opens below AND closes above upper band
-    # Enhanced: Also detect if candle is TOUCHING/BREAKING the upper band
-    # This catches breakouts earlier for better entry timing
+    # Calculate candle body strength
+    candle_range = candle_high - candle_low
+    candle_body = abs(candle_close - candle_open)
     
-    # Scenario 1: Classic breakout (opens below, closes above)
+    if candle_range == 0:
+        return "HOLD", False, "Invalid candle: zero range"
+    
+    body_ratio = (candle_body / candle_range) * 100
+    
+    # Require strong candle body (>50% of range) to filter weak signals
+    if body_ratio < 50:
+        return "HOLD", False, f"Weak candle body: {body_ratio:.1f}% (need >50%)"
+    
+    # === CALL SIGNAL (Classic Breakout Only) ===
+    # Only use proven classic breakout pattern
     classic_call_breakout = candle_open < bb_upper and candle_close > bb_upper
     
-    # Scenario 2: Strong bullish candle that closes near/above upper band
-    # (Catches momentum before full breakout completion)
-    aggressive_call = (
-        candle_close > candle_open and  # Bullish candle
-        candle_close >= bb_upper * 0.9995 and  # Close at or very near upper band
-        candle_high > bb_upper  # High touched/broke upper band
-    )
-    
-    if classic_call_breakout or aggressive_call:
-        # Determine detection mode
-        detection_mode = "Classic" if classic_call_breakout else "Aggressive"
-        
+    if classic_call_breakout:
         # Calculate breakout strength
-        breakout_strength = ((candle_close - bb_upper) / bb_upper) * 100 if candle_close > bb_upper else 0
+        breakout_strength = ((candle_close - bb_upper) / bb_upper) * 100
         
         reason = (
-            f"CALL ({detection_mode}): Bollinger upside breakout | "
-            f"Open={candle_open:.5f}, Close={candle_close:.5f}, High={candle_high:.5f} | "
-            f"BB_Upper={bb_upper:.5f} | Strength: {breakout_strength:.3f}%"
+            f"CALL: Classic BB breakout | "
+            f"Open={candle_open:.5f} < BB_Upper={bb_upper:.5f} | "
+            f"Close={candle_close:.5f} > BB_Upper | "
+            f"Strength: {breakout_strength:.3f}% | Body: {body_ratio:.1f}%"
         )
         return "CALL", True, reason
     
-    # === PUT SIGNAL (More Aggressive Detection) ===
-    # Original: Candle opens above AND closes below lower band
-    # Enhanced: Also detect if candle is TOUCHING/BREAKING the lower band
-    
-    # Scenario 1: Classic breakout (opens above, closes below)
+    # === PUT SIGNAL (Classic Breakout Only) ===
+    # Only use proven classic breakout pattern
     classic_put_breakout = candle_open > bb_lower and candle_close < bb_lower
     
-    # Scenario 2: Strong bearish candle that closes near/below lower band
-    # (Catches momentum before full breakout completion)
-    aggressive_put = (
-        candle_close < candle_open and  # Bearish candle
-        candle_close <= bb_lower * 1.0005 and  # Close at or very near lower band
-        candle_low < bb_lower  # Low touched/broke lower band
-    )
-    
-    if classic_put_breakout or aggressive_put:
-        # Determine detection mode
-        detection_mode = "Classic" if classic_put_breakout else "Aggressive"
-        
+    if classic_put_breakout:
         # Calculate breakout strength
-        breakout_strength = ((bb_lower - candle_close) / bb_lower) * 100 if candle_close < bb_lower else 0
+        breakout_strength = ((bb_lower - candle_close) / bb_lower) * 100
         
         reason = (
-            f"PUT ({detection_mode}): Bollinger downside breakout | "
-            f"Open={candle_open:.5f}, Close={candle_close:.5f}, Low={candle_low:.5f} | "
-            f"BB_Lower={bb_lower:.5f} | Strength: {breakout_strength:.3f}%"
+            f"PUT: Classic BB breakout | "
+            f"Open={candle_open:.5f} > BB_Lower={bb_lower:.5f} | "
+            f"Close={candle_close:.5f} < BB_Lower | "
+            f"Strength: {breakout_strength:.3f}% | Body: {body_ratio:.1f}%"
         )
         return "PUT", True, reason
     
     # === NO SIGNAL ===
     # Check where price is relative to bands
     if candle_close > bb_upper:
-        position = "above upper band (no breakout)"
+        position = "above upper band (no breakout pattern)"
     elif candle_close < bb_lower:
-        position = "below lower band (no breakout)"
+        position = "below lower band (no breakout pattern)"
     elif candle_close > bb_middle:
         position = "between middle and upper band"
     else:
         position = "between lower and middle band"
     
     reason = (
-        f"No breakout detected | "
-        f"Close={candle_close:.5f}, "
-        f"BB Range=[{bb_lower:.5f}, {bb_middle:.5f}, {bb_upper:.5f}] | "
+        f"No breakout | "
+        f"Close={candle_close:.5f} | "
+        f"BB=[{bb_lower:.5f}, {bb_middle:.5f}, {bb_upper:.5f}] | "
         f"Position: {position}"
     )
     
