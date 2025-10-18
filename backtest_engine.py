@@ -29,6 +29,7 @@ from pathlib import Path
 from strategies.breakout_strategy import check_extremes_condition, compute_breakout_signal
 from strategies.engulfing_strategy import compute_engulfing_signal
 from strategies.bollinger_break import compute_bollinger_break_signal
+from strategies.bollinger_mean_reversion import compute_bollinger_mean_reversion_signal
 
 
 class BacktestEngine:
@@ -293,14 +294,15 @@ class BacktestEngine:
     
     def backtest_bollinger(
         self,
-        period: int = 14,
-        deviation: float = 1.0,
+        period: int = 20,
+        deviation: float = 2.0,
         lookback: int = 30,
         start_candle: int = 100,
-        end_candle: Optional[int] = None
+        end_candle: Optional[int] = None,
+        mean_reversion: bool = False
     ) -> Dict:
         """
-        Backtest Bollinger Band breakout strategy
+        Backtest Bollinger Band strategy
         
         Args:
             period: Bollinger Band period
@@ -308,12 +310,14 @@ class BacktestEngine:
             lookback: Number of candles to use for analysis
             start_candle: Start index for backtesting
             end_candle: End index (None = use all data)
+            mean_reversion: If True, use mean reversion strategy instead of breakout
             
         Returns:
             Dictionary with backtest results
         """
+        strategy_type = "Mean Reversion" if mean_reversion else "Breakout"
         print("\n" + "="*80)
-        print(f"🔍 BACKTESTING: BOLLINGER BREAK STRATEGY (Period={period}, Dev={deviation})")
+        print(f"🔍 BACKTESTING: BOLLINGER {strategy_type.upper()} STRATEGY (Period={period}, Dev={deviation})")
         print("="*80)
         
         if end_candle is None or end_candle > len(self.df) - 2:
@@ -336,8 +340,11 @@ class BacktestEngine:
             if len(candles) < period + 1:
                 continue
             
-            # Check for Bollinger signal
-            signal, valid, msg = compute_bollinger_break_signal(candles, period, deviation)
+            # Check for Bollinger signal (breakout or mean reversion)
+            if mean_reversion:
+                signal, valid, msg = compute_bollinger_mean_reversion_signal(candles, period, deviation)
+            else:
+                signal, valid, msg = compute_bollinger_break_signal(candles, period, deviation)
             
             if valid:
                 # Simulate trade on NEXT candle
@@ -360,9 +367,9 @@ class BacktestEngine:
         results = self._calculate_metrics(
             trades, 
             equity_curve, 
-            f"Bollinger Break (P={period}, D={deviation})"
+            f"Bollinger {strategy_type} (P={period}, D={deviation})"
         )
-        self.results[f'bollinger_{period}_{deviation}'] = results
+        self.results[f'bollinger_{strategy_type.lower().replace(" ", "_")}_{period}_{deviation}'] = results
         
         return results
     
