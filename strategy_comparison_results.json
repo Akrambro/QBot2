@@ -1,0 +1,43 @@
+{
+  "mean_reversion": {
+    "strategy": "Mean Reversion",
+    "period": 20,
+    "deviation": 2.0,
+    "total_trades": 1866,
+    "wins": 948,
+    "losses": 918,
+    "win_rate": 50.80,
+    "total_profit": -1122.00,
+    "profit_factor": 0.88,
+    "expected_value": -0.60,
+    "max_drawdown": 1288.50
+  },
+  "breakout": {
+    "strategy": "Breakout",
+    "period": 20,
+    "deviation": 2.0,
+    "total_trades": 7752,
+    "wins": 3568,
+    "losses": 4184,
+    "win_rate": 46.03,
+    "total_profit": -11512.00,
+    "profit_factor": 0.72,
+    "expected_value": -1.49,
+    "max_drawdown": 11512.00
+  },
+  "analysis": {
+    "improvement": {
+      "win_rate": "+4.77%",
+      "profit": "+$10,390",
+      "expected_value": "+$0.89",
+      "signal_quality": "Mean reversion generates 76% fewer signals but much higher quality"
+    },
+    "conclusion": "Mean reversion strategy significantly outperforms breakout strategy for 1-minute binary options",
+    "next_steps": [
+      "Need additional +3.25% win rate to reach 54% profitability threshold",
+      "Add RSI filter for overbought/oversold confirmation",
+      "Implement one-step martingale for loss recovery",
+      "Test multi-timeframe confirmation"
+    ]
+  }
+}
