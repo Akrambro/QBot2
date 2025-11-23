@@ -43,6 +43,15 @@ function gatherSettings() {
     const bollinger_period = parseInt(document.getElementById('bollingerPeriod').value || '14', 10);
     const bollinger_deviation = parseFloat(document.getElementById('bollingerDeviation').value || '1.0');
     
+    const supertrend_strategy = {
+        enabled: document.getElementById('supertrendEnabled').checked,
+        analysis_timeframe: parseInt(document.getElementById('supertrendAnalysisTf').value || '60', 10),
+        trade_timeframe: parseInt(document.getElementById('supertrendTradeTf').value || '60', 10)
+    };
+    
+    const supertrend_period = parseInt(document.getElementById('supertrendPeriod').value || '8', 10);
+    const supertrend_multiplier = parseFloat(document.getElementById('supertrendMultiplier').value || '1.0');
+    
     return { 
         payout, 
         trade_percent: tradePercent, 
@@ -58,7 +67,10 @@ function gatherSettings() {
         engulfing_strategy,
         bollinger_strategy,
         bollinger_period,
-        bollinger_deviation
+        bollinger_deviation,
+        supertrend_strategy,
+        supertrend_period,
+        supertrend_multiplier
     };
 }
 

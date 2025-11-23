@@ -91,9 +91,13 @@ class StartSettings(BaseModel):
     breakout_strategy: StrategyConfig = Field(default_factory=lambda: StrategyConfig())
     engulfing_strategy: StrategyConfig = Field(default_factory=lambda: StrategyConfig())
     bollinger_strategy: StrategyConfig = Field(default_factory=lambda: StrategyConfig(enabled=False))
+    supertrend_strategy: StrategyConfig = Field(default_factory=lambda: StrategyConfig(enabled=False))
     # Bollinger-specific parameters
     bollinger_period: int = Field(14, ge=5, le=50)
     bollinger_deviation: float = Field(1.0, ge=0.5, le=3.0)
+    # Supertrend-specific parameters
+    supertrend_period: int = Field(8, ge=3, le=20)
+    supertrend_multiplier: float = Field(1.0, ge=0.5, le=3.0)
     # Daily limit fields
     daily_profit_limit: float = Field(0)
     daily_profit_is_percent: bool = Field(True)
@@ -342,6 +346,9 @@ def build_env(settings: StartSettings) -> Dict[str, str]:
         "QX_BOLLINGER_ENABLED": "1" if settings.bollinger_strategy.enabled else "0",
         "QX_BOLLINGER_PERIOD": str(settings.bollinger_period),
         "QX_BOLLINGER_DEVIATION": str(settings.bollinger_deviation),
+        "QX_SUPERTREND_ENABLED": "1" if settings.supertrend_strategy.enabled else "0",
+        "QX_SUPERTREND_PERIOD": str(settings.supertrend_period),
+        "QX_SUPERTREND_MULTIPLIER": str(settings.supertrend_multiplier),
     })
     return env
 

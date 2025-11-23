@@ -1,0 +1,36 @@
+{
+  "bollinger_optimized": {
+    "period": 20,
+    "deviation": 2.0,
+    "total_trades": 7752,
+    "win_rate": 46.02683178534572,
+    "total_profit": -11512.0,
+    "profit_factor": 0.7248565965583174,
+    "expected_value": -1.4850361197110422
+  },
+  "bollinger_baseline": {
+    "period": 14,
+    "deviation": 1.0,
+    "total_trades": 16292,
+    "win_rate": 46.765283574760616,
+    "total_profit": -21968.5,
+    "profit_factor": 0.7467024097774703,
+    "expected_value": -1.3484225386692856
+  },
+  "breakout": {
+    "lookback": 30,
+    "total_trades": 1479,
+    "win_rate": 47.59972954699121,
+    "total_profit": -1766.0,
+    "profit_factor": 0.7721290322580645,
+    "expected_value": -1.194050033806626
+  },
+  "engulfing": {
+    "lookback": 30,
+    "total_trades": 2442,
+    "win_rate": 45.61834561834562,
+    "total_profit": -3811.0,
+    "profit_factor": 0.713027108433735,
+    "expected_value": -1.5606060606060606
+  }
+}

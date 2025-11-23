@@ -103,6 +103,34 @@
                             </div>
                         </div>
                     </div>
+                    <div class="strategy-item">
+                        <div class="strategy-header">
+                            <input type="checkbox" id="supertrendEnabled" />
+                            <label for="supertrendEnabled"><strong>Supertrend Strategy</strong></label>
+                        </div>
+                        <div class="strategy-settings">
+                            <div class="field-row">
+                                <div class="field">
+                                    <label for="supertrendAnalysisTf">Analysis TF (s)</label>
+                                    <input type="number" id="supertrendAnalysisTf" name="supertrendAnalysisTf" min="15" max="3600" step="15" value="60" aria-label="Supertrend strategy analysis timeframe in seconds" />
+                                </div>
+                                <div class="field">
+                                    <label for="supertrendTradeTf">Trade Expiry (s)</label>
+                                    <input type="number" id="supertrendTradeTf" name="supertrendTradeTf" min="15" max="3600" step="15" value="60" aria-label="Supertrend strategy trade expiry in seconds" />
+                                </div>
+                            </div>
+                            <div class="field-row">
+                                <div class="field">
+                                    <label for="supertrendPeriod">ST Period</label>
+                                    <input type="number" id="supertrendPeriod" name="supertrendPeriod" min="3" max="20" step="1" value="8" aria-label="Supertrend period" />
+                                </div>
+                                <div class="field">
+                                    <label for="supertrendMultiplier">ST Multiplier</label>
+                                    <input type="number" id="supertrendMultiplier" name="supertrendMultiplier" min="0.5" max="3.0" step="0.1" value="1.0" aria-label="Supertrend ATR multiplier" />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 

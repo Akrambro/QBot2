@@ -22,6 +22,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
+from config import MIN_CANDLES
 import json
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from strategies.breakout_strategy import check_extremes_condition, compute_break
 from strategies.engulfing_strategy import compute_engulfing_signal
 from strategies.bollinger_break import compute_bollinger_break_signal
 from strategies.bollinger_mean_reversion import compute_bollinger_mean_reversion_signal
+from strategies.supertrend_strategy import compute_supertrend_signal
 
 
 class BacktestEngine:
@@ -192,7 +194,7 @@ class BacktestEngine:
             
             candles = self.prepare_candles(i, lookback)
             
-            if len(candles) < 10:
+            if len(candles) < MIN_CANDLES:
                 continue
             
             # Check for breakout signal
@@ -263,7 +265,7 @@ class BacktestEngine:
             
             candles = self.prepare_candles(i, lookback)
             
-            if len(candles) < 10:
+            if len(candles) < MIN_CANDLES:
                 continue
             
             # Check for engulfing signal
@@ -337,7 +339,7 @@ class BacktestEngine:
             
             candles = self.prepare_candles(i, lookback)
             
-            if len(candles) < period + 1:
+            if len(candles) < max(period + 1, MIN_CANDLES):
                 continue
             
             # Check for Bollinger signal (breakout or mean reversion)
@@ -370,6 +372,80 @@ class BacktestEngine:
             f"Bollinger {strategy_type} (P={period}, D={deviation})"
         )
         self.results[f'bollinger_{strategy_type.lower().replace(" ", "_")}_{period}_{deviation}'] = results
+        
+        return results
+    
+    def backtest_supertrend(
+        self,
+        period: int = 8,
+        multiplier: float = 1.0,
+        lookback: int = 30,
+        start_candle: int = 100,
+        end_candle: Optional[int] = None
+    ) -> Dict:
+        """
+        Backtest Supertrend strategy
+        
+        Args:
+            period: Supertrend period (default: 8)
+            multiplier: Supertrend multiplier (default: 1.0)
+            lookback: Number of candles to use for analysis
+            start_candle: Start index for backtesting
+            end_candle: End index (None = use all data)
+            
+        Returns:
+            Dictionary with backtest results
+        """
+        print("\n" + "="*80)
+        print(f"🔍 BACKTESTING: SUPERTREND STRATEGY (Period={period}, Mult={multiplier})")
+        print("="*80)
+        
+        if end_candle is None or end_candle > len(self.df) - 2:
+            end_candle = len(self.df) - 2
+        
+        if start_candle < 0:
+            start_candle = 0
+        
+        trades = []
+        equity_curve = [0]
+        current_equity = 0
+        
+        for i in range(start_candle, end_candle):
+            if i >= len(self.df) - 2:  # Safety check
+                break
+            
+            candles = self.prepare_candles(i, lookback)
+            
+            if len(candles) < max(period + 2, MIN_CANDLES):
+                continue
+            
+            # Check for Supertrend signal
+            signal, valid, msg = compute_supertrend_signal(candles, period, multiplier)
+            
+            if valid:
+                # Simulate trade on NEXT candle
+                won, pnl = self.simulate_trade(i + 1, signal, duration_minutes=1)
+                
+                current_equity += pnl
+                equity_curve.append(current_equity)
+                
+                trades.append({
+                    'entry_time': self.df.index[i + 1],
+                    'signal': signal,
+                    'entry_price': self.df.iloc[i + 1]['close'],
+                    'exit_price': self.df.iloc[i + 2]['close'],
+                    'won': won,
+                    'pnl': pnl,
+                    'equity': current_equity,
+                    'reason': msg
+                })
+        
+        results = self._calculate_metrics(
+            trades, 
+            equity_curve, 
+            f"Supertrend (P={period}, M={multiplier})"
+        )
+        self.results[f'supertrend_{period}_{multiplier}'] = results
         
         return results
     

@@ -1,7 +1,7 @@
 fastapi
 uvicorn
 python-dotenv
-pyquotex
+git+https://github.com/cleitonleonel/pyquotex.git#egg=pyquotex
 fake-useragent
 requests
 pandas

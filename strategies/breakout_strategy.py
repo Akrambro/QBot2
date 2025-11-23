@@ -13,6 +13,7 @@ Key Features:
 
 from typing import List, Dict, Tuple
 from .trend_utils import get_trend_direction, calculate_atr
+from config import MIN_CANDLES
 
 
 def check_extremes_condition(candles: List[Dict]) -> Tuple[bool, bool]:
@@ -48,9 +49,9 @@ def compute_breakout_signal(candles: List[Dict], extremes: Tuple[bool, bool]) ->
     """
     is_low_extreme, is_high_extreme = extremes
     
-    # Reduced minimum candle requirement for faster signal generation
-    if len(candles) < 10:  # Reduced from 20 to 10
-        return "", False, f"Need 10+ candles (have {len(candles)})"
+    # Minimum candle requirement (centralized)
+    if len(candles) < MIN_CANDLES:
+        return "", False, f"Need {MIN_CANDLES}+ candles (have {len(candles)})"
     
     # Determine market trend
     trend = get_trend_direction(candles)

@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import List, Dict, Optional
 
 from dotenv import load_dotenv
+from config import MIN_CANDLES, MIN_VALID_CANDLES
 from pyquotex.stable_api import Quotex
 
 from assets import live_assets, otc_assets
@@ -15,6 +16,8 @@ from utils import get_payout_filtered_assets
 from strategies.breakout_strategy import check_extremes_condition, compute_breakout_signal
 from strategies.engulfing_strategy import compute_engulfing_signal
 from strategies.bollinger_break import compute_bollinger_break_signal
+from strategies.supertrend_strategy import compute_supertrend_signal
+from strategies.supertrend_strategy import compute_supertrend_signal
 
 load_dotenv()
 
@@ -40,6 +43,12 @@ ENGULFING_ENABLED = os.getenv("QX_ENGULFING_ENABLED", "1") == "1"
 BOLLINGER_ENABLED = os.getenv("QX_BOLLINGER_ENABLED", "0") == "1"
 BOLLINGER_PERIOD = int(os.getenv("QX_BOLLINGER_PERIOD", "14"))
 BOLLINGER_DEVIATION = float(os.getenv("QX_BOLLINGER_DEVIATION", "1.0"))
+SUPERTREND_ENABLED = os.getenv("QX_SUPERTREND_ENABLED", "0") == "1"
+SUPERTREND_PERIOD = int(os.getenv("QX_SUPERTREND_PERIOD", "8"))
+SUPERTREND_MULTIPLIER = float(os.getenv("QX_SUPERTREND_MULTIPLIER", "1.0"))
+SUPERTREND_ENABLED = os.getenv("QX_SUPERTREND_ENABLED", "1") == "1"
+SUPERTREND_PERIOD = int(os.getenv("QX_SUPERTREND_PERIOD", "8"))
+SUPERTREND_MULTIPLIER = float(os.getenv("QX_SUPERTREND_MULTIPLIER", "1.0"))
 
 # Global state
 active_trades = {}
@@ -93,8 +102,8 @@ async def fetch_candles(client: Quotex, asset: str) -> Optional[List[Dict]]:
             candles = candles[-30:]
         
         # Check if we have enough candles for strategies
-        if len(candles) < 20:
-            logger.warning(f"{asset}: Only got {len(candles)} candles - strategies need 20+")
+        if len(candles) < MIN_CANDLES:
+            logger.warning(f"{asset}: Only got {len(candles)} candles - strategies need {MIN_CANDLES}+")
             # Don't return None - try to work with what we have
             # Some strategies might still work with fewer candles
         
@@ -160,9 +169,9 @@ async def fetch_candles(client: Quotex, asset: str) -> Optional[List[Dict]]:
             
             normalized_candles.append(normalized)
         
-        # Make sure we have enough valid candles
-        if len(normalized_candles) < 6:
-            logger.warning(f"{asset}: Insufficient valid candles - got {len(normalized_candles)}, need 6+")
+        # Make sure we have enough valid candles (after normalization)
+        if len(normalized_candles) < MIN_VALID_CANDLES:
+            logger.warning(f"{asset}: Insufficient valid candles - got {len(normalized_candles)}, need {MIN_VALID_CANDLES}+")
             return None
         
         logger.info(f"[OK] {asset}: Validated {len(normalized_candles)} candles (passed OHLC checks)")
@@ -279,6 +288,36 @@ async def analyze_asset(client: Quotex, asset: str, trade_amount: float) -> Opti
                 "strategy": "bollinger_break"
             }
     
+    # Check Supertrend strategy
+    if SUPERTREND_ENABLED and len(candles) >= SUPERTREND_PERIOD + 2:
+        signal, valid, msg = compute_supertrend_signal(
+            candles,
+            period=SUPERTREND_PERIOD,
+            multiplier=SUPERTREND_MULTIPLIER
+        )
+        if valid:
+            print(f"✅ {asset} SUPERTREND SIGNAL: {signal.upper()} - {msg}")
+            return {
+                "asset": asset,
+                "signal": signal,
+                "strategy": "supertrend"
+            }
+    
+    return None
+    if SUPERTREND_ENABLED and len(candles) >= SUPERTREND_PERIOD + 2:
+        signal, valid, msg = compute_supertrend_signal(
+            candles,
+            period=SUPERTREND_PERIOD,
+            multiplier=SUPERTREND_MULTIPLIER
+        )
+        if valid:
+            print(f"✅ {asset} SUPERTREND SIGNAL: {signal.upper()} - {msg}")
+            return {
+                "asset": asset,
+                "signal": signal,
+                "strategy": "supertrend"
+            }
+    
     return None
 
 async def analyze_and_trade(client: Quotex, asset: str, trade_amount: float) -> bool:
@@ -343,6 +382,13 @@ async def place_trade(client: Quotex, signal_data: Dict, trade_amount: float) ->
                     print(f"   Amount: ${trade_amount}")
                     print(f"   Trade ID: {trade_id}")
                     print(f"   BB Period: {BOLLINGER_PERIOD} | Deviation: {BOLLINGER_DEVIATION}")
+                elif strategy == "supertrend":
+                    print(f"🎯 SUPERTREND TRADE PLACED!")
+                    print(f"   Asset: {asset}")
+                    print(f"   Direction: {signal.upper()}")
+                    print(f"   Amount: ${trade_amount}")
+                    print(f"   Trade ID: {trade_id}")
+                    print(f"   ST Period: {SUPERTREND_PERIOD} | Multiplier: {SUPERTREND_MULTIPLIER}")
                 else:
                     print(f"✅ {strategy.upper()} {signal.upper()} on {asset} - ID: {trade_id}")
                 
@@ -522,6 +568,10 @@ async def main():
     print(f"📊 Timeframe: {TIMEFRAME}s | Breakout: {BREAKOUT_ENABLED} | Engulfing: {ENGULFING_ENABLED}")
     if BOLLINGER_ENABLED:
         print(f"📊 Bollinger Break: {BOLLINGER_ENABLED} | Period: {BOLLINGER_PERIOD} | Deviation: {BOLLINGER_DEVIATION}")
+    if SUPERTREND_ENABLED:
+        print(f"📊 Supertrend: {SUPERTREND_ENABLED} | Period: {SUPERTREND_PERIOD} | Multiplier: {SUPERTREND_MULTIPLIER}")
+    if SUPERTREND_ENABLED:
+        print(f"📊 Supertrend: {SUPERTREND_ENABLED} | Period: {SUPERTREND_PERIOD} | Multiplier: {SUPERTREND_MULTIPLIER}")
     
     # Get tradable assets
     all_assets = live_assets + otc_assets
